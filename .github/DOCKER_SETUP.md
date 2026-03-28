@@ -10,9 +10,19 @@
 
 ## 🔧 配置 GitHub Secrets
 
-### 1. Docker Hub 配置（可选）
+### GitHub Container Registry（默认已配置）✅
 
-如果要推送到 Docker Hub，需要配置以下 Secrets：
+GitHub Container Registry (ghcr.io) **无需任何配置**，workflow 会自动推送：
+
+- **镜像地址**：`ghcr.io/isboyjc/goproxy`
+- **认证方式**：自动使用 `GITHUB_TOKEN`
+- **推送策略**：每次构建都会推送
+
+### Docker Hub 配置（可选）⚙️
+
+Docker Hub 配置是**可选的**，如果不配置，workflow 会自动跳过 Docker Hub 推送，**不会影响 GHCR 构建**。
+
+**如需推送到 Docker Hub**，按以下步骤配置：
 
 1. 登录 [Docker Hub](https://hub.docker.com/)
 2. 在 **Account Settings > Security** 创建 Access Token
@@ -20,11 +30,9 @@
    - `DOCKERHUB_USERNAME`: 你的 Docker Hub 用户名
    - `DOCKERHUB_TOKEN`: 刚才创建的 Access Token
 
-### 2. GitHub Container Registry（默认已配置）
-
-GitHub Container Registry (ghcr.io) 无需额外配置，workflow 使用自动提供的 `GITHUB_TOKEN`。
-
-**镜像地址**：`ghcr.io/isboyjc/goproxy`
+配置完成后，workflow 会同时推送到两个仓库：
+- `docker.io/isboyjc/goproxy`
+- `ghcr.io/isboyjc/goproxy`
 
 ## 🏗️ 构建特性
 
@@ -120,8 +128,26 @@ docker run -d \
 
 ---
 
+## 🔄 构建策略
+
+Workflow 使用**分离构建策略**：
+
+1. **GHCR 构建**（总是执行）：
+   - 无需任何配置，自动推送到 `ghcr.io/isboyjc/goproxy`
+   - 使用内置的 `GITHUB_TOKEN`
+   - 即使 Docker Hub 未配置也不受影响
+
+2. **Docker Hub 构建**（可选）：
+   - 仅在配置了 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN` secrets 时执行
+   - 未配置时自动跳过，不会报错
+
+**优势**：
+- ✅ 零配置即可使用（通过 GHCR）
+- ✅ Docker Hub 完全可选
+- ✅ 构建失败不会影响另一个仓库
+
 ## 📝 注意事项
 
 - **权限配置**：首次推送到 GHCR 可能需要在仓库 **Settings > Actions > General** 中设置 **Workflow permissions** 为 `Read and write permissions`
 - **GHCR 可见性**：默认镜像为私有，可在 **Packages** 页面修改为公开
-- **Docker Hub 可选**：如果不需要推送到 Docker Hub，可在 workflow 文件中删除相关配置，或不配置 DOCKERHUB_* secrets（workflow 会跳过 Docker Hub 登录失败的步骤）
+- **Docker Hub 可选**：不配置 Docker Hub secrets 不会影响构建，workflow 会自动跳过

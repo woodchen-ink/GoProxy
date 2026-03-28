@@ -244,17 +244,9 @@ docker compose up -d
 # http://localhost:7778（默认密码：goproxy）
 ```
 
-### 使用 Docker Hub 镜像
+### 使用预构建镜像（docker run）
 
-```bash
-docker pull isboyjc/goproxy:latest
-docker run -d --name proxygo \
-  -p 127.0.0.1:7776:7776 -p 127.0.0.1:7777:7777 -p 7778:7778 \
-  -e WEBUI_PASSWORD=your_password -v "$(pwd)/data:/app/data" \
-  isboyjc/goproxy:latest
-```
-
-### 使用 GitHub Container Registry 镜像
+**推荐使用 GitHub Container Registry**（自动构建，无需额外配置）：
 
 ```bash
 docker pull ghcr.io/isboyjc/goproxy:latest
@@ -262,6 +254,16 @@ docker run -d --name proxygo \
   -p 127.0.0.1:7776:7776 -p 127.0.0.1:7777:7777 -p 7778:7778 \
   -e WEBUI_PASSWORD=your_password -v "$(pwd)/data:/app/data" \
   ghcr.io/isboyjc/goproxy:latest
+```
+
+**或使用 Docker Hub**（如果已配置）：
+
+```bash
+docker pull isboyjc/goproxy:latest
+docker run -d --name proxygo \
+  -p 127.0.0.1:7776:7776 -p 127.0.0.1:7777:7777 -p 7778:7778 \
+  -e WEBUI_PASSWORD=your_password -v "$(pwd)/data:/app/data" \
+  isboyjc/goproxy:latest
 ```
 
 ### 环境变量配置
