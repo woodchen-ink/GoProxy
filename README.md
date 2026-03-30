@@ -299,15 +299,20 @@ export https_proxy=http://proxy:your_password@your-server-ip:7777
 
 **SOCKS5 代理**（更多应用支持）：
 ```bash
-# 使用随机模式
+# 使用随机模式（客户端本地解析域名）
 export ALL_PROXY=socks5://localhost:7779
 
-# 或使用稳定模式
+# 或使用稳定模式（客户端本地解析域名）
 export ALL_PROXY=socks5://localhost:7780
+
+# 如果希望域名先交给 GoProxy / 上游 SOCKS5 解析，使用 socks5h
+export ALL_PROXY=socks5h://localhost:7779
 
 # 远程使用（带认证）
 export ALL_PROXY=socks5://proxy:your_password@your-server-ip:7779
 ```
+
+> 说明：当客户端使用 `socks5h://`、`curl --socks5-hostname` 或浏览器勾选“通过 SOCKS 代理 DNS 查询”时，GoProxy 会先把域名原样转交给上游 SOCKS5；若上游解析失败且 `SOCKS5_LOCAL_DNS_FALLBACK=true`，会自动用本机 DNS 解析成 IP 再重试一次。
 
 #### 端口对比
 
@@ -476,6 +481,7 @@ docker compose up -d
 | `PROXY_AUTH_ENABLED` | `false` | 是否启用代理认证（对外开放时强烈建议启用） |
 | `PROXY_AUTH_USERNAME` | `proxy` | 代理认证用户名 |
 | `PROXY_AUTH_PASSWORD` | 空 | 代理认证密码 |
+| `SOCKS5_LOCAL_DNS_FALLBACK` | `true` | 上游 SOCKS5 无法解析域名时，是否允许 GoProxy 用本机 DNS 解析成 IP 再重试 |
 | `WEBUI_PASSWORD` | `goproxy` | WebUI 登录密码 |
 | `STABLE_PORT` | `7776` | HTTP 最低延迟代理端口 |
 | `RANDOM_PORT` | `7777` | HTTP 随机轮换代理端口 |
@@ -1285,6 +1291,7 @@ python3 -c "import requests; print(requests.get('https://httpbin.org/ip', proxie
 - **HTTP 代理服务**（7776/7777）：可使用池中的 HTTP 或 SOCKS5 上游代理
 - **SOCKS5 代理服务**（7779/7780）：仅使用 SOCKS5 上游代理（因为许多免费 HTTP 代理不支持 HTTPS CONNECT）
 - 两种服务都支持自动重试和故障切换
+- 当客户端把域名交给 SOCKS5 链路解析时，成功率还会受到上游 SOCKS5 DNS 能力影响；现在默认会在上游解析失败后，自动走一次本机 DNS 兜底重试
 
 ### Q7: 如何在浏览器中配置 SOCKS5 代理？
 
@@ -1301,6 +1308,8 @@ python3 -c "import requests; print(requests.get('https://httpbin.org/ip', proxie
 3. Port：`7779` 或 `7780`
 4. 选择：SOCKS v5
 5. 勾选"通过 SOCKS 代理 DNS 查询"（可选）
+
+如果勾选第 5 步，域名会优先交给 GoProxy / 上游 SOCKS5 解析；从当前版本开始，若上游解析失败且 `SOCKS5_LOCAL_DNS_FALLBACK=true`，GoProxy 会自动切换到本机 DNS 解析兜底。代价是失败场景下会产生一次本地 DNS 查询，不适合对远程 DNS 隐私有严格要求的场景。
 
 ### Q8: 如何查看 SOCKS5 服务的运行日志？
 

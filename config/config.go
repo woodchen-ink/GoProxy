@@ -46,6 +46,9 @@ type Config struct {
 	ProxyAuthPassword     string // 代理认证密码明文（用于 SOCKS5）
 	ProxyAuthPasswordHash string // 代理认证密码 SHA256 哈希（用于 HTTP）
 
+	// SOCKS5 域名解析兜底配置
+	SOCKS5LocalDNSFallback bool // 上游 SOCKS5 无法解析域名时，是否允许本地 DNS 兜底
+
 	// 地理过滤配置
 	BlockedCountries []string // 屏蔽的国家代码列表（如 ["CN", "RU"]，默认 ["CN"]）
 
@@ -69,8 +72,8 @@ type Config struct {
 	ValidateURL         string // 验证目标 URL
 
 	// ========== 健康检查配置 ==========
-	HealthCheckInterval   int // 状态监控间隔（分钟）（默认5）
-	HealthCheckBatchSize  int // 每批验证数量（默认20）
+	HealthCheckInterval    int // 状态监控间隔（分钟）（默认5）
+	HealthCheckBatchSize   int // 每批验证数量（默认20）
 	HealthCheckConcurrency int // 批次内并发数（默认50）
 
 	// ========== 优化配置 ==========
@@ -113,7 +116,7 @@ func DefaultConfig() *Config {
 	if password == "" {
 		password = DefaultPassword
 	}
-	
+
 	// 读取代理认证配置
 	proxyAuthEnabled := os.Getenv("PROXY_AUTH_ENABLED") == "true"
 	proxyAuthUsername := os.Getenv("PROXY_AUTH_USERNAME")
@@ -125,7 +128,12 @@ func DefaultConfig() *Config {
 	if proxyAuthPassword != "" {
 		proxyAuthHash = passwordHash(proxyAuthPassword)
 	}
-	
+
+	socks5LocalDNSFallback := true
+	if raw := os.Getenv("SOCKS5_LOCAL_DNS_FALLBACK"); raw != "" {
+		socks5LocalDNSFallback = strings.EqualFold(raw, "true")
+	}
+
 	// 读取地理过滤配置
 	blockedCountries := []string{"CN"} // 默认屏蔽中国大陆
 	if blockedEnv := os.Getenv("BLOCKED_COUNTRIES"); blockedEnv != "" {
@@ -139,7 +147,7 @@ func DefaultConfig() *Config {
 			}
 		}
 	}
-	
+
 	return &Config{
 		// 基础服务配置
 		WebUIPort:         ":7778",
@@ -149,20 +157,21 @@ func DefaultConfig() *Config {
 		SOCKS5Port:        ":7779",
 		StableSOCKS5Port:  ":7780",
 		DBPath:            dataDir() + "proxy.db",
-		
+
 		// 代理认证配置
-		ProxyAuthEnabled:      proxyAuthEnabled,
-		ProxyAuthUsername:     proxyAuthUsername,
-		ProxyAuthPassword:     proxyAuthPassword,
-		ProxyAuthPasswordHash: proxyAuthHash,
-		
+		ProxyAuthEnabled:       proxyAuthEnabled,
+		ProxyAuthUsername:      proxyAuthUsername,
+		ProxyAuthPassword:      proxyAuthPassword,
+		ProxyAuthPasswordHash:  proxyAuthHash,
+		SOCKS5LocalDNSFallback: socks5LocalDNSFallback,
+
 		// 地理过滤配置
 		BlockedCountries: blockedCountries,
 
 		// 池子容量配置
-		PoolMaxSize:        100,  // 总容量
-		PoolHTTPRatio:      0.5,  // HTTP占50%
-		PoolMinPerProtocol: 10,   // 每协议最少10个
+		PoolMaxSize:        100, // 总容量
+		PoolHTTPRatio:      0.5, // HTTP占50%
+		PoolMinPerProtocol: 10,  // 每协议最少10个
 
 		// 延迟标准配置
 		MaxLatencyMs:          2500, // 标准2.5秒
@@ -194,12 +203,12 @@ func DefaultConfig() *Config {
 		SourceCooldownMinutes:  30, // 禁用30分钟
 
 		// 兼容旧配置
-		MaxResponseMs: 5000,
-		MaxFailCount:  3,
-		MaxRetry:      3,
-		FetchInterval: 30,
-		CheckInterval: 10,
-		HTTPSourceURL: "https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/http.txt",
+		MaxResponseMs:   5000,
+		MaxFailCount:    3,
+		MaxRetry:        3,
+		FetchInterval:   30,
+		CheckInterval:   10,
+		HTTPSourceURL:   "https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/http.txt",
 		SOCKS5SourceURL: "https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/socks5.txt",
 	}
 }

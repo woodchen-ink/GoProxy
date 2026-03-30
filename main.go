@@ -38,6 +38,7 @@ func main() {
 
 	log.Printf("[main] 🎯 智能代理池配置: 容量=%d HTTP=%.0f%% SOCKS5=%.0f%% 延迟标准=%dms",
 		cfg.PoolMaxSize, cfg.PoolHTTPRatio*100, (1-cfg.PoolHTTPRatio)*100, cfg.MaxLatencyMs)
+	log.Printf("[main] 🔎 SOCKS5 本地 DNS 兜底: %t", cfg.SOCKS5LocalDNSFallback)
 
 	// 初始化存储
 	store, err := storage.New(cfg.DBPath)
@@ -56,7 +57,7 @@ func main() {
 	poolMgr := pool.NewManager(store, cfg)
 	healthChecker := checker.NewHealthChecker(store, validate, cfg, poolMgr)
 	opt := optimizer.NewOptimizer(store, fetch, validate, poolMgr, cfg)
-	
+
 	// 清理无效代理
 	totalDeleted := 0
 	if len(cfg.BlockedCountries) > 0 {
@@ -69,11 +70,11 @@ func main() {
 		log.Printf("[main] 🧹 已清理 %d 个无出口信息的代理", deleted)
 		totalDeleted += int(deleted)
 	}
-	
+
 	// 创建 HTTP 代理服务器：随机轮换 + 最低延迟
 	randomServer := proxy.New(store, cfg, "random", cfg.ProxyPort)
 	stableServer := proxy.New(store, cfg, "lowest-latency", cfg.StableProxyPort)
-	
+
 	// 创建 SOCKS5 代理服务器：随机轮换 + 最低延迟
 	socks5RandomServer := proxy.NewSOCKS5(store, cfg, "random", cfg.SOCKS5Port)
 	socks5StableServer := proxy.NewSOCKS5(store, cfg, "lowest-latency", cfg.StableSOCKS5Port)

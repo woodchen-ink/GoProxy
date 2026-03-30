@@ -41,7 +41,7 @@ func (s *SOCKS5Server) Start() error {
 		authStatus = fmt.Sprintf("需认证 (用户: %s)", s.cfg.ProxyAuthUsername)
 	}
 	log.Printf("socks5 server listening on %s [%s] [%s]", s.port, modeDesc, authStatus)
-	
+
 	listener, err := net.Listen("tcp", s.port)
 	if err != nil {
 		return err
@@ -78,7 +78,7 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 	// 重试机制：只使用 SOCKS5 协议的上游代理（天然支持 HTTPS）
 	tried := []string{}
 	maxRetries := s.cfg.MaxRetry + 2 // 增加重试次数以应对质量差的代理
-	
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		var p *storage.Proxy
 		var err error
@@ -99,7 +99,7 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 		tried = append(tried, p.Address)
 
 		// 连接上游代理
-		upstreamConn, err := s.dialViaProxy(p, target)
+		upstreamConn, connectedTarget, usedLocalDNSFallback, err := s.dialViaProxy(p, target)
 		if err != nil {
 			log.Printf("[socks5] dial %s via %s (%s) failed: %v, removing", target, p.Address, p.Protocol, err)
 			s.storage.Delete(p.Address)
@@ -112,12 +112,16 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 			return
 		}
 
-		log.Printf("[socks5] %s via %s established", target, p.Address)
+		if usedLocalDNSFallback {
+			log.Printf("[socks5] %s via %s established (local dns fallback -> %s)", target, p.Address, connectedTarget)
+		} else {
+			log.Printf("[socks5] %s via %s established", target, p.Address)
+		}
 
 		// 双向转发数据
 		go io.Copy(upstreamConn, clientConn)
 		io.Copy(clientConn, upstreamConn)
-		
+
 		// 转发完成，关闭连接
 		upstreamConn.Close()
 		return
@@ -321,10 +325,10 @@ func (s *SOCKS5Server) sendSOCKS5Reply(conn net.Conn, rep byte) error {
 	// [VER(1), REP(1), RSV(1), ATYP(1), BND.ADDR(variable), BND.PORT(2)]
 	// 简化：使用 0.0.0.0:0
 	reply := []byte{
-		0x05, // VER
-		rep,  // REP: 0x00=成功, 0x01=一般失败, 0x07=命令不支持, 0x08=地址类型不支持
-		0x00, // RSV
-		0x01, // ATYP: IPv4
+		0x05,       // VER
+		rep,        // REP: 0x00=成功, 0x01=一般失败, 0x07=命令不支持, 0x08=地址类型不支持
+		0x00,       // RSV
+		0x01,       // ATYP: IPv4
 		0, 0, 0, 0, // BND.ADDR: 0.0.0.0
 		0, 0, // BND.PORT: 0
 	}
@@ -332,16 +336,16 @@ func (s *SOCKS5Server) sendSOCKS5Reply(conn net.Conn, rep byte) error {
 	return err
 }
 
-// dialViaProxy 通过上游代理连接目标
-func (s *SOCKS5Server) dialViaProxy(p *storage.Proxy, target string) (net.Conn, error) {
+// dialViaProxy 通过上游代理连接目标，并在需要时启用本地 DNS 兜底。
+func (s *SOCKS5Server) dialViaProxy(p *storage.Proxy, target string) (net.Conn, string, bool, error) {
 	timeout := time.Duration(s.cfg.ValidateTimeout) * time.Second
-	
+
 	switch p.Protocol {
 	case "http":
 		// 连接到 HTTP 代理
 		conn, err := net.DialTimeout("tcp", p.Address, timeout)
 		if err != nil {
-			return nil, err
+			return nil, "", false, err
 		}
 		// 发送 CONNECT 请求
 		fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
@@ -349,92 +353,28 @@ func (s *SOCKS5Server) dialViaProxy(p *storage.Proxy, target string) (net.Conn, 
 		n, err := conn.Read(buf)
 		if err != nil {
 			conn.Close()
-			return nil, err
+			return nil, "", false, err
 		}
 		// 检查 HTTP 响应
 		if n < 12 || string(buf[:12]) != "HTTP/1.1 200" {
 			conn.Close()
-			return nil, fmt.Errorf("upstream proxy connect failed")
+			return nil, "", false, fmt.Errorf("upstream proxy connect failed")
 		}
-		return conn, nil
-		
+		return conn, target, false, nil
+
 	case "socks5":
-		// 使用 SOCKS5 代理
-		dialer := &net.Dialer{Timeout: timeout}
-		proxyConn, err := dialer.Dial("tcp", p.Address)
+		conn, connectedTarget, usedLocalDNSFallback, err := dialSOCKS5Upstream(
+			p.Address,
+			target,
+			timeout,
+			s.cfg.SOCKS5LocalDNSFallback,
+		)
 		if err != nil {
-			return nil, err
+			return nil, "", false, err
 		}
-
-		// SOCKS5 握手（无认证）
-		if _, err := proxyConn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
-			proxyConn.Close()
-			return nil, err
-		}
-
-		handshake := make([]byte, 2)
-		if _, err := io.ReadFull(proxyConn, handshake); err != nil {
-			proxyConn.Close()
-			return nil, err
-		}
-
-		if handshake[0] != 0x05 || handshake[1] != 0x00 {
-			proxyConn.Close()
-			return nil, fmt.Errorf("socks5 handshake failed")
-		}
-
-		// 发送 CONNECT 请求
-		host, port, err := net.SplitHostPort(target)
-		if err != nil {
-			proxyConn.Close()
-			return nil, err
-		}
-
-		// 构建请求
-		req := []byte{0x05, 0x01, 0x00} // VER, CMD=CONNECT, RSV
-		
-		// 判断是 IP 还是域名
-		if ip := net.ParseIP(host); ip != nil {
-			if ip4 := ip.To4(); ip4 != nil {
-				req = append(req, 0x01) // IPv4
-				req = append(req, ip4...)
-			} else {
-				req = append(req, 0x04) // IPv6
-				req = append(req, ip...)
-			}
-		} else {
-			req = append(req, 0x03) // Domain
-			req = append(req, byte(len(host)))
-			req = append(req, []byte(host)...)
-		}
-
-		// 添加端口
-		portNum := uint16(0)
-		fmt.Sscanf(port, "%d", &portNum)
-		portBytes := make([]byte, 2)
-		binary.BigEndian.PutUint16(portBytes, portNum)
-		req = append(req, portBytes...)
-
-		if _, err := proxyConn.Write(req); err != nil {
-			proxyConn.Close()
-			return nil, err
-		}
-
-		// 读取响应
-		reply := make([]byte, 10)
-		if _, err := io.ReadAtLeast(proxyConn, reply, 10); err != nil {
-			proxyConn.Close()
-			return nil, err
-		}
-
-		if reply[1] != 0x00 {
-			proxyConn.Close()
-			return nil, fmt.Errorf("socks5 connect failed, code: %d", reply[1])
-		}
-
-		return proxyConn, nil
+		return conn, connectedTarget, usedLocalDNSFallback, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %s", p.Protocol)
+		return nil, "", false, fmt.Errorf("unsupported protocol: %s", p.Protocol)
 	}
 }
