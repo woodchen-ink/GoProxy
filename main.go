@@ -38,7 +38,8 @@ func main() {
 
 	log.Printf("[main] 🎯 智能代理池配置: 容量=%d HTTP=%.0f%% SOCKS5=%.0f%% 延迟标准=%dms",
 		cfg.PoolMaxSize, cfg.PoolHTTPRatio*100, (1-cfg.PoolHTTPRatio)*100, cfg.MaxLatencyMs)
-	log.Printf("[main] 🔎 SOCKS5 本地 DNS 兜底: %t", cfg.SOCKS5LocalDNSFallback)
+	log.Printf("[main] 🔎 SOCKS5 DNS 模式: %s", cfg.SOCKS5DNSMode)
+	log.Printf("[main] 🔀 SOCKS5 允许 HTTP 上游: %t", cfg.SOCKS5AllowHTTPUpstream)
 
 	// 初始化存储
 	store, err := storage.New(cfg.DBPath)

@@ -11,6 +11,12 @@ import (
 
 const DefaultPassword = "goproxy"
 
+const (
+	SOCKS5DNSModeRemote   = "remote"
+	SOCKS5DNSModeFallback = "fallback"
+	SOCKS5DNSModeLocal    = "local"
+)
+
 func dataDir() string {
 	if d := os.Getenv("DATA_DIR"); d != "" {
 		os.MkdirAll(d, 0755)
@@ -46,8 +52,11 @@ type Config struct {
 	ProxyAuthPassword     string // 代理认证密码明文（用于 SOCKS5）
 	ProxyAuthPasswordHash string // 代理认证密码 SHA256 哈希（用于 HTTP）
 
-	// SOCKS5 域名解析兜底配置
-	SOCKS5LocalDNSFallback bool // 上游 SOCKS5 无法解析域名时，是否允许本地 DNS 兜底
+	// SOCKS5 域名解析策略
+	SOCKS5DNSMode string // remote=上游解析 fallback=失败后本地兜底 local=始终本地解析
+
+	// SOCKS5 上游协议策略
+	SOCKS5AllowHTTPUpstream bool // 是否允许下游 SOCKS5 使用 HTTP 上游代理
 
 	// 地理过滤配置
 	BlockedCountries []string // 屏蔽的国家代码列表（如 ["CN", "RU"]，默认 ["CN"]）
@@ -110,6 +119,36 @@ func passwordHash(plain string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(plain)))
 }
 
+// NormalizeSOCKS5DNSMode 归一化 SOCKS5 DNS 模式，非法值回退为 fallback。
+func NormalizeSOCKS5DNSMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case SOCKS5DNSModeRemote:
+		return SOCKS5DNSModeRemote
+	case SOCKS5DNSModeLocal:
+		return SOCKS5DNSModeLocal
+	case SOCKS5DNSModeFallback:
+		return SOCKS5DNSModeFallback
+	default:
+		return SOCKS5DNSModeFallback
+	}
+}
+
+// socks5DNSModeFromEnv 从新旧环境变量读取 SOCKS5 DNS 模式，优先使用新配置。
+func socks5DNSModeFromEnv() string {
+	if raw := os.Getenv("SOCKS5_DNS_MODE"); raw != "" {
+		return NormalizeSOCKS5DNSMode(raw)
+	}
+
+	if raw := os.Getenv("SOCKS5_LOCAL_DNS_FALLBACK"); raw != "" {
+		if strings.EqualFold(raw, "true") {
+			return SOCKS5DNSModeFallback
+		}
+		return SOCKS5DNSModeRemote
+	}
+
+	return SOCKS5DNSModeFallback
+}
+
 func DefaultConfig() *Config {
 	// 优先从环境变量 WEBUI_PASSWORD 读取密码，未设置时使用默认密码
 	password := os.Getenv("WEBUI_PASSWORD")
@@ -129,10 +168,8 @@ func DefaultConfig() *Config {
 		proxyAuthHash = passwordHash(proxyAuthPassword)
 	}
 
-	socks5LocalDNSFallback := true
-	if raw := os.Getenv("SOCKS5_LOCAL_DNS_FALLBACK"); raw != "" {
-		socks5LocalDNSFallback = strings.EqualFold(raw, "true")
-	}
+	socks5DNSMode := socks5DNSModeFromEnv()
+	socks5AllowHTTPUpstream := strings.EqualFold(os.Getenv("SOCKS5_ALLOW_HTTP_UPSTREAM"), "true")
 
 	// 读取地理过滤配置
 	blockedCountries := []string{"CN"} // 默认屏蔽中国大陆
@@ -159,11 +196,12 @@ func DefaultConfig() *Config {
 		DBPath:            dataDir() + "proxy.db",
 
 		// 代理认证配置
-		ProxyAuthEnabled:       proxyAuthEnabled,
-		ProxyAuthUsername:      proxyAuthUsername,
-		ProxyAuthPassword:      proxyAuthPassword,
-		ProxyAuthPasswordHash:  proxyAuthHash,
-		SOCKS5LocalDNSFallback: socks5LocalDNSFallback,
+		ProxyAuthEnabled:        proxyAuthEnabled,
+		ProxyAuthUsername:       proxyAuthUsername,
+		ProxyAuthPassword:       proxyAuthPassword,
+		ProxyAuthPasswordHash:   proxyAuthHash,
+		SOCKS5DNSMode:           socks5DNSMode,
+		SOCKS5AllowHTTPUpstream: socks5AllowHTTPUpstream,
 
 		// 地理过滤配置
 		BlockedCountries: blockedCountries,

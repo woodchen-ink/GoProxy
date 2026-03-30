@@ -2,11 +2,15 @@
 
 ## Proxy Behavior
 
-- SOCKS5 inbound requests now prefer upstream domain resolution first.
-- When `SOCKS5_LOCAL_DNS_FALLBACK=true`, GoProxy retries failed upstream domain connects with locally resolved IP addresses.
-- This improves compatibility with flaky free SOCKS5 upstreams, but failed domain-resolution paths may leak one local DNS query.
+- SOCKS5 inbound requests support three DNS modes: `remote`, `fallback`, and `local`.
+- `fallback` first lets the upstream SOCKS5 resolve the hostname, then retries with locally resolved IP addresses if that fails.
+- `local` always resolves the hostname on the GoProxy host before forwarding the request upstream.
+- `fallback` and `local` improve compatibility with flaky free SOCKS5 upstreams, but they may leak a local DNS query.
+- SOCKS5 inbound traffic defaults to SOCKS5 upstreams only, but can optionally reuse HTTP upstreams that support CONNECT.
 
 ## Config
 
-- `SOCKS5_LOCAL_DNS_FALLBACK` defaults to `true`.
-- Set it to `false` if you need strict remote-DNS behavior and accept more hostname-resolution failures from upstream proxies.
+- `SOCKS5_DNS_MODE` defaults to `fallback`.
+- Set `SOCKS5_DNS_MODE=local` for pure local DNS.
+- `SOCKS5_ALLOW_HTTP_UPSTREAM` defaults to `false`.
+- Legacy `SOCKS5_LOCAL_DNS_FALLBACK=true/false` is still accepted for backward compatibility, but the new mode variable takes precedence.

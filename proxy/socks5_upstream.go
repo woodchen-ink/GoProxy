@@ -7,47 +7,78 @@ import (
 	"io"
 	"net"
 	"time"
+
+	"goproxy/config"
 )
 
-// dialSOCKS5Upstream 优先让上游代理解析域名，失败时可选回退到本地 DNS 解析后的 IP。
-func dialSOCKS5Upstream(proxyAddress, target string, timeout time.Duration, allowLocalDNSFallback bool) (net.Conn, string, bool, error) {
-	conn, err := dialSOCKS5UpstreamOnce(proxyAddress, target, timeout)
-	if err == nil {
+// dialSOCKS5Upstream 按配置选择远程 DNS、本地 DNS，或远程失败后再做本地兜底。
+func dialSOCKS5Upstream(proxyAddress, target string, timeout time.Duration, dnsMode string) (net.Conn, string, bool, error) {
+	if !socks5TargetNeedsDNSFallback(target) {
+		conn, err := dialSOCKS5UpstreamOnce(proxyAddress, target, timeout)
+		if err != nil {
+			return nil, "", false, err
+		}
 		return conn, target, false, nil
 	}
 
-	if !allowLocalDNSFallback || !socks5TargetNeedsDNSFallback(target) {
-		return nil, "", false, err
-	}
-
-	fallbackTargets, resolveErr := resolveSOCKS5FallbackTargets(target, timeout)
-	if resolveErr != nil {
-		return nil, "", false, fmt.Errorf("%w; local dns fallback unavailable: %v", err, resolveErr)
-	}
-
-	var lastFallbackErr error
-	for _, fallbackTarget := range fallbackTargets {
-		conn, fallbackErr := dialSOCKS5UpstreamOnce(proxyAddress, fallbackTarget, timeout)
-		if fallbackErr == nil {
-			return conn, fallbackTarget, true, nil
+	switch config.NormalizeSOCKS5DNSMode(dnsMode) {
+	case config.SOCKS5DNSModeLocal:
+		localConn, localTarget, localErr := dialSOCKS5UpstreamWithLocalDNS(proxyAddress, target, timeout)
+		if localErr != nil {
+			return nil, "", false, localErr
 		}
-		lastFallbackErr = fallbackErr
-	}
+		return localConn, localTarget, true, nil
+	case config.SOCKS5DNSModeRemote:
+		conn, err := dialSOCKS5UpstreamOnce(proxyAddress, target, timeout)
+		if err != nil {
+			return nil, "", false, err
+		}
+		return conn, target, false, nil
+	default:
+		conn, err := dialSOCKS5UpstreamOnce(proxyAddress, target, timeout)
+		if err == nil {
+			return conn, target, false, nil
+		}
 
-	if lastFallbackErr == nil {
-		lastFallbackErr = fmt.Errorf("no fallback address available")
-	}
+		fallbackConn, fallbackTarget, fallbackErr := dialSOCKS5UpstreamWithLocalDNS(proxyAddress, target, timeout)
+		if fallbackErr != nil {
+			return nil, "", false, fmt.Errorf("%w; local dns fallback failed: %v", err, fallbackErr)
+		}
 
-	return nil, "", false, fmt.Errorf("%w; local dns fallback failed: %v", err, lastFallbackErr)
+		return fallbackConn, fallbackTarget, true, nil
+	}
 }
 
-// socks5TargetNeedsDNSFallback 判断目标是否仍然需要本地 DNS 兜底。
+// socks5TargetNeedsDNSFallback 判断目标是否仍然需要经过本地 DNS 解析链路。
 func socks5TargetNeedsDNSFallback(target string) bool {
 	host, _, err := net.SplitHostPort(target)
 	if err != nil {
 		return false
 	}
 	return net.ParseIP(host) == nil
+}
+
+// dialSOCKS5UpstreamWithLocalDNS 使用本地 DNS 解析目标域名并依次尝试解析结果。
+func dialSOCKS5UpstreamWithLocalDNS(proxyAddress, target string, timeout time.Duration) (net.Conn, string, error) {
+	localTargets, err := resolveSOCKS5FallbackTargets(target, timeout)
+	if err != nil {
+		return nil, "", err
+	}
+
+	var lastErr error
+	for _, localTarget := range localTargets {
+		conn, dialErr := dialSOCKS5UpstreamOnce(proxyAddress, localTarget, timeout)
+		if dialErr == nil {
+			return conn, localTarget, nil
+		}
+		lastErr = dialErr
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no local dns targets available")
+	}
+
+	return nil, "", lastErr
 }
 
 // dialSOCKS5UpstreamOnce 建立到单个上游 SOCKS5 的连接并完成一次 CONNECT。

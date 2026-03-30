@@ -308,11 +308,15 @@ export ALL_PROXY=socks5://localhost:7780
 # 如果希望域名先交给 GoProxy / 上游 SOCKS5 解析，使用 socks5h
 export ALL_PROXY=socks5h://localhost:7779
 
+# 若服务端设置 SOCKS5_DNS_MODE=local，socks5h 请求也会在 GoProxy 本机解析后再转上游
+
 # 远程使用（带认证）
 export ALL_PROXY=socks5://proxy:your_password@your-server-ip:7779
 ```
 
-> 说明：当客户端使用 `socks5h://`、`curl --socks5-hostname` 或浏览器勾选“通过 SOCKS 代理 DNS 查询”时，GoProxy 会先把域名原样转交给上游 SOCKS5；若上游解析失败且 `SOCKS5_LOCAL_DNS_FALLBACK=true`，会自动用本机 DNS 解析成 IP 再重试一次。
+> 说明：当客户端使用 `socks5h://`、`curl --socks5-hostname` 或浏览器勾选“通过 SOCKS 代理 DNS 查询”时，GoProxy 的行为由 `SOCKS5_DNS_MODE` 控制：`remote` 为始终上游解析，`fallback` 为先上游后本地兜底，`local` 为始终由 GoProxy 本机先解析再转上游。
+
+> 默认情况下，下游 SOCKS5 只使用上游 SOCKS5。若你确认上游 HTTP 代理支持 `CONNECT host:port`，可设置 `SOCKS5_ALLOW_HTTP_UPSTREAM=true`，让 GoProxy 以本地 SOCKS5 入口对接 HTTP 上游。
 
 #### 端口对比
 
@@ -481,7 +485,8 @@ docker compose up -d
 | `PROXY_AUTH_ENABLED` | `false` | 是否启用代理认证（对外开放时强烈建议启用） |
 | `PROXY_AUTH_USERNAME` | `proxy` | 代理认证用户名 |
 | `PROXY_AUTH_PASSWORD` | 空 | 代理认证密码 |
-| `SOCKS5_LOCAL_DNS_FALLBACK` | `true` | 上游 SOCKS5 无法解析域名时，是否允许 GoProxy 用本机 DNS 解析成 IP 再重试 |
+| `SOCKS5_DNS_MODE` | `fallback` | SOCKS5 域名解析模式：`remote`=上游解析，`fallback`=失败后本地兜底，`local`=始终本地解析 |
+| `SOCKS5_ALLOW_HTTP_UPSTREAM` | `false` | 是否允许下游 SOCKS5 复用上游 HTTP 代理（通过 CONNECT 转发） |
 | `WEBUI_PASSWORD` | `goproxy` | WebUI 登录密码 |
 | `STABLE_PORT` | `7776` | HTTP 最低延迟代理端口 |
 | `RANDOM_PORT` | `7777` | HTTP 随机轮换代理端口 |
@@ -490,6 +495,10 @@ docker compose up -d
 | `SOCKS5_RANDOM_PORT` | `7779` | SOCKS5 随机轮换代理端口 |
 
 完整环境变量列表请查看 `.env.example` 文件。
+
+兼容说明：
+- 旧变量 `SOCKS5_LOCAL_DNS_FALLBACK=true/false` 仍可使用
+- 若同时设置，`SOCKS5_DNS_MODE` 优先级更高
 
 **⚠️ 生产部署注意事项**：
 - 如使用 Dokploy、Coolify 等平台部署，确保 `docker-compose.yml` 中配置了平台网络（如 `dokploy-network`）
@@ -1289,9 +1298,9 @@ python3 -c "import requests; print(requests.get('https://httpbin.org/ip', proxie
 
 不会。两种服务质量和成功率相近，但**使用不同的上游代理**：
 - **HTTP 代理服务**（7776/7777）：可使用池中的 HTTP 或 SOCKS5 上游代理
-- **SOCKS5 代理服务**（7779/7780）：仅使用 SOCKS5 上游代理（因为许多免费 HTTP 代理不支持 HTTPS CONNECT）
+- **SOCKS5 代理服务**（7779/7780）：默认仅使用 SOCKS5 上游代理；若设置 `SOCKS5_ALLOW_HTTP_UPSTREAM=true`，也可复用支持 CONNECT 的 HTTP 上游
 - 两种服务都支持自动重试和故障切换
-- 当客户端把域名交给 SOCKS5 链路解析时，成功率还会受到上游 SOCKS5 DNS 能力影响；现在默认会在上游解析失败后，自动走一次本机 DNS 兜底重试
+- 当客户端把域名交给 SOCKS5 链路解析时，成功率还会受到上游 SOCKS5 DNS 能力影响；现在可通过 `SOCKS5_DNS_MODE=fallback` 或 `local` 开启服务端本地解析能力
 
 ### Q7: 如何在浏览器中配置 SOCKS5 代理？
 
@@ -1309,7 +1318,12 @@ python3 -c "import requests; print(requests.get('https://httpbin.org/ip', proxie
 4. 选择：SOCKS v5
 5. 勾选"通过 SOCKS 代理 DNS 查询"（可选）
 
-如果勾选第 5 步，域名会优先交给 GoProxy / 上游 SOCKS5 解析；从当前版本开始，若上游解析失败且 `SOCKS5_LOCAL_DNS_FALLBACK=true`，GoProxy 会自动切换到本机 DNS 解析兜底。代价是失败场景下会产生一次本地 DNS 查询，不适合对远程 DNS 隐私有严格要求的场景。
+如果勾选第 5 步，域名会进入 GoProxy 的 SOCKS5 域名解析链路：
+- `SOCKS5_DNS_MODE=remote`：始终上游解析
+- `SOCKS5_DNS_MODE=fallback`：先上游，失败后本机 DNS 兜底
+- `SOCKS5_DNS_MODE=local`：始终本机 DNS 解析
+
+其中 `fallback` 和 `local` 都会在服务端产生本地 DNS 查询，不适合对远程 DNS 隐私有严格要求的场景。
 
 ### Q8: 如何查看 SOCKS5 服务的运行日志？
 

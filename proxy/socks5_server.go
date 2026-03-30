@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"time"
 
 	"goproxy/config"
@@ -75,7 +76,7 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 	}
 
 	// 带重试的连接上游代理
-	// 重试机制：只使用 SOCKS5 协议的上游代理（天然支持 HTTPS）
+	// 重试机制：默认只使用 SOCKS5 上游；如配置允许，也可回退到 HTTP CONNECT 上游
 	tried := []string{}
 	maxRetries := s.cfg.MaxRetry + 2 // 增加重试次数以应对质量差的代理
 
@@ -83,15 +84,10 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 		var p *storage.Proxy
 		var err error
 
-		// SOCKS5 服务只使用 SOCKS5 上游代理
-		if s.mode == "lowest-latency" {
-			p, err = s.storage.GetLowestLatencyByProtocolExclude("socks5", tried)
-		} else {
-			p, err = s.storage.GetRandomByProtocolExclude("socks5", tried)
-		}
+		p, err = s.selectUpstreamProxy(tried)
 
 		if err != nil {
-			log.Printf("[socks5] no available socks5 upstream proxy: %v", err)
+			log.Printf("[socks5] no available upstream proxy: %v", err)
 			s.sendSOCKS5Reply(clientConn, 0x01) // General failure
 			return
 		}
@@ -99,7 +95,7 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 		tried = append(tried, p.Address)
 
 		// 连接上游代理
-		upstreamConn, connectedTarget, usedLocalDNSFallback, err := s.dialViaProxy(p, target)
+		upstreamConn, connectedTarget, usedLocalDNS, err := s.dialViaProxy(p, target)
 		if err != nil {
 			log.Printf("[socks5] dial %s via %s (%s) failed: %v, removing", target, p.Address, p.Protocol, err)
 			s.storage.Delete(p.Address)
@@ -112,8 +108,8 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 			return
 		}
 
-		if usedLocalDNSFallback {
-			log.Printf("[socks5] %s via %s established (local dns fallback -> %s)", target, p.Address, connectedTarget)
+		if usedLocalDNS {
+			log.Printf("[socks5] %s via %s established (local dns -> %s)", target, p.Address, connectedTarget)
 		} else {
 			log.Printf("[socks5] %s via %s established", target, p.Address)
 		}
@@ -130,6 +126,21 @@ func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 	// 所有重试都失败
 	s.sendSOCKS5Reply(clientConn, 0x01) // General failure
 	log.Printf("[socks5] all proxies failed for %s", target)
+}
+
+// selectUpstreamProxy 根据配置选择 SOCKS5 服务可用的上游代理。
+func (s *SOCKS5Server) selectUpstreamProxy(excludes []string) (*storage.Proxy, error) {
+	if s.cfg.SOCKS5AllowHTTPUpstream {
+		if s.mode == "lowest-latency" {
+			return s.storage.GetLowestLatencyExclude(excludes)
+		}
+		return s.storage.GetRandomExclude(excludes)
+	}
+
+	if s.mode == "lowest-latency" {
+		return s.storage.GetLowestLatencyByProtocolExclude("socks5", excludes)
+	}
+	return s.storage.GetRandomByProtocolExclude("socks5", excludes)
 }
 
 // socks5Handshake 处理 SOCKS5 握手
@@ -255,69 +266,77 @@ func (s *SOCKS5Server) socks5Auth(conn net.Conn) error {
 
 // readSOCKS5Request 读取 SOCKS5 请求
 func (s *SOCKS5Server) readSOCKS5Request(conn net.Conn) (string, error) {
-	buf := make([]byte, 262)
+	header := make([]byte, 4)
 
-	// 读取请求: [VER(1), CMD(1), RSV(1), ATYP(1), DST.ADDR(variable), DST.PORT(2)]
-	n, err := io.ReadAtLeast(conn, buf, 4)
-	if err != nil {
+	// 读取请求头: [VER(1), CMD(1), RSV(1), ATYP(1)]
+	if _, err := io.ReadFull(conn, header); err != nil {
 		return "", err
 	}
 
-	if buf[0] != 0x05 {
-		return "", fmt.Errorf("invalid version: %d", buf[0])
+	if header[0] != 0x05 {
+		return "", fmt.Errorf("invalid version: %d", header[0])
 	}
 
-	cmd := buf[1]
+	cmd := header[1]
 	if cmd != 0x01 { // 只支持 CONNECT
 		s.sendSOCKS5Reply(conn, 0x07) // Command not supported
 		return "", fmt.Errorf("unsupported command: %d", cmd)
 	}
 
-	atyp := buf[3]
-	var host string
-	var addrLen int
-
-	switch atyp {
-	case 0x01: // IPv4
-		addrLen = 4
-		if n < 4+addrLen+2 {
-			if _, err := io.ReadFull(conn, buf[n:4+addrLen+2]); err != nil {
-				return "", err
-			}
+	host, err := s.readSOCKS5RequestHost(conn, header[3])
+	if err != nil {
+		if isSOCKS5AddressTypeError(err) {
+			s.sendSOCKS5Reply(conn, 0x08) // Address type not supported
 		}
-		host = fmt.Sprintf("%d.%d.%d.%d", buf[4], buf[5], buf[6], buf[7])
-	case 0x03: // Domain name
-		addrLen = int(buf[4])
-		if n < 4+1+addrLen+2 {
-			if _, err := io.ReadFull(conn, buf[n:4+1+addrLen+2]); err != nil {
-				return "", err
-			}
-		}
-		host = string(buf[5 : 5+addrLen])
-	case 0x04: // IPv6
-		addrLen = 16
-		if n < 4+addrLen+2 {
-			if _, err := io.ReadFull(conn, buf[n:4+addrLen+2]); err != nil {
-				return "", err
-			}
-		}
-		// 简化处理，直接转换
-		host = net.IP(buf[4 : 4+addrLen]).String()
-	default:
-		s.sendSOCKS5Reply(conn, 0x08) // Address type not supported
-		return "", fmt.Errorf("unsupported address type: %d", atyp)
+		return "", err
 	}
 
-	// 读取端口
-	portOffset := 4
-	if atyp == 0x03 {
-		portOffset = 5 + addrLen
-	} else {
-		portOffset = 4 + addrLen
+	portBuf := make([]byte, 2)
+	if _, err := io.ReadFull(conn, portBuf); err != nil {
+		return "", err
 	}
-	port := binary.BigEndian.Uint16(buf[portOffset : portOffset+2])
+	port := binary.BigEndian.Uint16(portBuf)
 
 	return fmt.Sprintf("%s:%d", host, port), nil
+}
+
+// readSOCKS5RequestHost 按地址类型读取目标地址，避免可变长度域名被截断。
+func (s *SOCKS5Server) readSOCKS5RequestHost(conn net.Conn, atyp byte) (string, error) {
+	switch atyp {
+	case 0x01:
+		buf := make([]byte, net.IPv4len)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			return "", err
+		}
+		return net.IP(buf).String(), nil
+	case 0x03:
+		lengthBuf := make([]byte, 1)
+		if _, err := io.ReadFull(conn, lengthBuf); err != nil {
+			return "", err
+		}
+		addrLen := int(lengthBuf[0])
+		if addrLen == 0 {
+			return "", fmt.Errorf("empty domain name in socks5 request")
+		}
+		buf := make([]byte, addrLen)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			return "", err
+		}
+		return string(buf), nil
+	case 0x04:
+		buf := make([]byte, net.IPv6len)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			return "", err
+		}
+		return net.IP(buf).String(), nil
+	default:
+		return "", fmt.Errorf("unsupported address type: %d", atyp)
+	}
+}
+
+// isSOCKS5AddressTypeError 判断错误是否为地址类型不支持。
+func isSOCKS5AddressTypeError(err error) bool {
+	return strings.HasPrefix(err.Error(), "unsupported address type:")
 }
 
 // sendSOCKS5Reply 发送 SOCKS5 响应
@@ -336,7 +355,7 @@ func (s *SOCKS5Server) sendSOCKS5Reply(conn net.Conn, rep byte) error {
 	return err
 }
 
-// dialViaProxy 通过上游代理连接目标，并在需要时启用本地 DNS 兜底。
+// dialViaProxy 通过上游代理连接目标，并按 DNS 模式决定是否本地解析。
 func (s *SOCKS5Server) dialViaProxy(p *storage.Proxy, target string) (net.Conn, string, bool, error) {
 	timeout := time.Duration(s.cfg.ValidateTimeout) * time.Second
 
@@ -367,7 +386,7 @@ func (s *SOCKS5Server) dialViaProxy(p *storage.Proxy, target string) (net.Conn, 
 			p.Address,
 			target,
 			timeout,
-			s.cfg.SOCKS5LocalDNSFallback,
+			s.cfg.SOCKS5DNSMode,
 		)
 		if err != nil {
 			return nil, "", false, err
