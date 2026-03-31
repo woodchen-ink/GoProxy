@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -24,6 +25,8 @@ var fastUpdateSources = []Source{
 	{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/http/data.txt", "http"},
 	{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/socks4/data.txt", "socks5"},
 	{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/socks5/data.txt", "socks5"},
+	// socks5-proxy.github.io - HTML 页面内嵌 socks5:// 地址
+	{"https://socks5-proxy.github.io/", "socks5"},
 	// ProxyScraper - 每30分钟更新
 	{"https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/http.txt", "http"},
 	{"https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks4.txt", "socks5"},
@@ -48,6 +51,8 @@ var slowUpdateSources = []Source{
 
 // 所有源
 var allSources = append(fastUpdateSources, slowUpdateSources...)
+
+var htmlProxyURLRegex = regexp.MustCompile(`(?i)(socks5)://((?:\d{1,3}\.){3}\d{1,3}:\d{1,5})`)
 
 type Fetcher struct {
 	sources       []Source
@@ -238,9 +243,47 @@ func (f *Fetcher) fetchFromURL(url, protocol string) ([]storage.Proxy, error) {
 		return nil, fmt.Errorf("unexpected status %d from %s", resp.StatusCode, url)
 	}
 
+	if strings.Contains(url, "socks5-proxy.github.io") {
+		return parseHTMLProxyList(resp.Body, protocol)
+	}
+
 	return parseProxyList(resp.Body, protocol)
 }
 
+// parseHTMLProxyList extracts embedded proxy URLs from HTML sources.
+func parseHTMLProxyList(r io.Reader, protocol string) ([]storage.Proxy, error) {
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+
+	matches := htmlProxyURLRegex.FindAllStringSubmatch(string(body), -1)
+	seen := make(map[string]bool)
+	proxies := make([]storage.Proxy, 0, len(matches))
+
+	for _, match := range matches {
+		proto := strings.ToLower(strings.TrimSpace(match[1]))
+		if proto == "" {
+			proto = protocol
+		}
+
+		addr := strings.TrimSpace(match[2])
+		key := proto + "://" + addr
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		proxies = append(proxies, storage.Proxy{
+			Address:  addr,
+			Protocol: proto,
+		})
+	}
+
+	return proxies, nil
+}
+
+// parseProxyList parses plain-text proxy lists with one entry per line.
 func parseProxyList(r io.Reader, protocol string) ([]storage.Proxy, error) {
 	var proxies []storage.Proxy
 	scanner := bufio.NewScanner(r)
