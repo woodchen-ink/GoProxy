@@ -9,6 +9,7 @@ services:
       - "7780:7780" # socks5最低延迟代理
     environment:
       - TZ=${TZ:-Asia/Shanghai} # 容器时区设置，默认使用上海时间
+      - DATA_DIR=/app/data
       - WEBUI_PASSWORD=web密码
       - BLOCKED_COUNTRIES=CN,RU,HK
       - PROXY_AUTH_ENABLED=true

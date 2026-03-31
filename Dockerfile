@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 ENV TZ=Asia/Shanghai
+ENV DATA_DIR=/app/data
 
 WORKDIR /app
 COPY --from=builder /app/proxy-pool .

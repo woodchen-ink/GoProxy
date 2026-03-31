@@ -460,7 +460,7 @@ docker run -d --name proxygo \
   ghcr.io/isboyjc/goproxy:latest
 ```
 
-> 💡 **数据卷说明**：使用 Named Volume `goproxy-data` 确保数据持久化。如需本地开发调试，可改用 `-v "$(pwd)/data:/app/data"`。
+> 💡 **数据卷说明**：使用 Named Volume `goproxy-data` 确保数据持久化。镜像默认会把数据库和 `config.json` 写入 `/app/data`；如需本地开发调试，可改用 `-v "$(pwd)/data:/app/data"`。
 
 ### 数据备份与恢复
 

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
 
 const DefaultPassword = "goproxy"
+const defaultContainerDataDir = "/app/data"
 
 const (
 	SOCKS5DNSModeRemote   = "remote"
@@ -18,14 +20,32 @@ const (
 )
 
 func dataDir() string {
-	if d := os.Getenv("DATA_DIR"); d != "" {
-		os.MkdirAll(d, 0755)
-		return d + "/"
-	}
-	return ""
+	dir := resolveDataDir(os.Getenv("DATA_DIR"), dirExists(defaultContainerDataDir))
+	_ = os.MkdirAll(dir, 0755)
+	return dir
 }
 
-func ConfigFile() string { return dataDir() + "config.json" }
+// resolveDataDir 统一决定运行时数据目录，优先环境变量，其次容器挂载目录，最后回退到本地 data 目录。
+func resolveDataDir(envDir string, containerDirAvailable bool) string {
+	if d := strings.TrimSpace(envDir); d != "" {
+		return filepath.Clean(d)
+	}
+	if containerDirAvailable {
+		return defaultContainerDataDir
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "data"
+	}
+	return filepath.Join(wd, "data")
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func ConfigFile() string { return filepath.Join(dataDir(), "config.json") }
 
 type Config struct {
 	// WebUI 端口
@@ -193,7 +213,7 @@ func DefaultConfig() *Config {
 		StableProxyPort:   ":7776",
 		SOCKS5Port:        ":7779",
 		StableSOCKS5Port:  ":7780",
-		DBPath:            dataDir() + "proxy.db",
+		DBPath:            filepath.Join(dataDir(), "proxy.db"),
 
 		// 代理认证配置
 		ProxyAuthEnabled:        proxyAuthEnabled,

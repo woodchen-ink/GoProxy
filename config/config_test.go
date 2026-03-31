@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // TestNormalizeSOCKS5DNSMode 保证三态模式和非法值回退行为稳定。
 func TestNormalizeSOCKS5DNSMode(t *testing.T) {
@@ -57,4 +61,55 @@ func TestSocks5DNSModeFromEnv(t *testing.T) {
 			t.Fatalf("mode = %q, want %q", got, SOCKS5DNSModeRemote)
 		}
 	})
+}
+
+// TestResolveDataDir 保证容器部署和本地开发的数据目录选择稳定。
+func TestResolveDataDir(t *testing.T) {
+	t.Run("env wins", func(t *testing.T) {
+		want := filepath.Join(t.TempDir(), "custom-data")
+		if got := resolveDataDir("  "+want+"  ", true); got != want {
+			t.Fatalf("resolveDataDir(env) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("container path fallback", func(t *testing.T) {
+		if got := resolveDataDir("", true); got != defaultContainerDataDir {
+			t.Fatalf("resolveDataDir(container) = %q, want %q", got, defaultContainerDataDir)
+		}
+	})
+
+	t.Run("local cwd fallback", func(t *testing.T) {
+		tempDir := t.TempDir()
+		oldWD, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("getwd: %v", err)
+		}
+		if err := os.Chdir(tempDir); err != nil {
+			t.Fatalf("chdir temp: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := os.Chdir(oldWD); err != nil {
+				t.Fatalf("restore wd: %v", err)
+			}
+		})
+
+		want := filepath.Join(tempDir, "data")
+		if got := resolveDataDir("", false); got != want {
+			t.Fatalf("resolveDataDir(local) = %q, want %q", got, want)
+		}
+	})
+}
+
+// TestDataDirCreatesDirectory 保证首次启动时数据目录会自动创建。
+func TestDataDirCreatesDirectory(t *testing.T) {
+	customDir := filepath.Join(t.TempDir(), "runtime-data")
+	t.Setenv("DATA_DIR", customDir)
+
+	got := dataDir()
+	if got != customDir {
+		t.Fatalf("dataDir() = %q, want %q", got, customDir)
+	}
+	if !dirExists(customDir) {
+		t.Fatalf("dataDir() did not create %q", customDir)
+	}
 }

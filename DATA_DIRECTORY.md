@@ -173,9 +173,10 @@ volumes:
 ```bash
 docker run -d \
   -v "$(pwd)/data:/app/data" \  # 挂载 data 目录
-  -e DATA_DIR=/app/data \        # 告诉程序数据目录位置
   ghcr.io/isboyjc/goproxy:latest
 ```
+
+> 💡 容器镜像默认会把运行时数据写入 `/app/data`，只有在你想改成别的目录时才需要额外设置 `DATA_DIR`。
 
 ## 📊 数据大小
 
