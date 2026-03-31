@@ -71,10 +71,11 @@ func TestSelectUpstreamProxyAllowsHTTPUpstream(t *testing.T) {
 		cfg: &config.Config{
 			SOCKS5AllowHTTPUpstream: true,
 		},
-		mode: "lowest-latency",
+		mode:     "lowest-latency",
+		affinity: newSessionAffinityManager(0),
 	}
 
-	upstream, err := server.selectUpstreamProxy(nil)
+	upstream, err := server.selectUpstreamProxy(nil, "")
 	if err != nil {
 		t.Fatalf("selectUpstreamProxy: %v", err)
 	}
@@ -105,10 +106,35 @@ func TestSelectUpstreamProxyRejectsHTTPWhenDisabled(t *testing.T) {
 		cfg: &config.Config{
 			SOCKS5AllowHTTPUpstream: false,
 		},
-		mode: "lowest-latency",
+		mode:     "lowest-latency",
+		affinity: newSessionAffinityManager(0),
 	}
 
-	if _, err := server.selectUpstreamProxy(nil); err == nil {
+	if _, err := server.selectUpstreamProxy(nil, ""); err == nil {
 		t.Fatal("expected no upstream when only HTTP proxies exist and HTTP upstream is disabled")
+	}
+}
+
+func TestParseSessionUsername(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseUser string
+		username string
+		wantOK   bool
+		wantID   string
+	}{
+		{name: "plain username", baseUser: "proxy", username: "proxy", wantOK: true, wantID: ""},
+		{name: "session suffix", baseUser: "proxy", username: "proxy-session-abc123", wantOK: true, wantID: "abc123"},
+		{name: "sid suffix", baseUser: "proxy", username: "proxy-sid-reg-01", wantOK: true, wantID: "reg-01"},
+		{name: "invalid prefix", baseUser: "proxy", username: "proxyx-session-1", wantOK: false, wantID: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotOK, gotID := parseSessionUsername(tt.baseUser, tt.username)
+			if gotOK != tt.wantOK || gotID != tt.wantID {
+				t.Fatalf("parseSessionUsername(%q, %q) = (%v, %q), want (%v, %q)", tt.baseUser, tt.username, gotOK, gotID, tt.wantOK, tt.wantID)
+			}
+		})
 	}
 }

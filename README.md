@@ -295,6 +295,11 @@ export https_proxy=http://localhost:7776
 # 远程使用（带认证）
 export http_proxy=http://proxy:your_password@your-server-ip:7777
 export https_proxy=http://proxy:your_password@your-server-ip:7777
+
+# 远程使用（带 session 固定出口）
+# 同一个 session 用户名在一段时间内会固定命中同一个上游代理
+export http_proxy=http://proxy-session-reg001:your_password@your-server-ip:7777
+export https_proxy=http://proxy-session-reg001:your_password@your-server-ip:7777
 ```
 
 **SOCKS5 代理**（更多应用支持）：
@@ -312,11 +317,19 @@ export ALL_PROXY=socks5h://localhost:7779
 
 # 远程使用（带认证）
 export ALL_PROXY=socks5://proxy:your_password@your-server-ip:7779
+
+# 远程使用（带 session 固定出口）
+export ALL_PROXY=socks5://proxy-session-reg001:your_password@your-server-ip:7779
 ```
 
 > 说明：当客户端使用 `socks5h://`、`curl --socks5-hostname` 或浏览器勾选“通过 SOCKS 代理 DNS 查询”时，GoProxy 的行为由 `SOCKS5_DNS_MODE` 控制：`remote` 为始终上游解析，`fallback` 为先上游后本地兜底，`local` 为始终由 GoProxy 本机先解析再转上游。
 
 > 默认情况下，下游 SOCKS5 只使用上游 SOCKS5。若你确认上游 HTTP 代理支持 `CONNECT host:port`，可设置 `SOCKS5_ALLOW_HTTP_UPSTREAM=true`，让 GoProxy 以本地 SOCKS5 入口对接 HTTP 上游。
+
+> Session 固定出口说明：当代理认证开启时，用户名除了基础用户名（默认 `proxy`）外，还支持以下格式：
+> - `proxy-session-<session_id>`
+> - `proxy-sid-<session_id>`
+> 同一个 `session_id` 在同一个代理端口/模式下会优先复用同一条上游代理绑定，一段时间未使用后会自动过期。若上游代理失效被移除，会自动重新选择并重绑。
 
 #### 端口对比
 
@@ -1247,12 +1260,26 @@ curl --socks5 localhost:7779 https://httpbin.org/ip
 # SOCKS5 带认证
 curl --socks5 username:password@server-ip:7779 https://httpbin.org/ip
 
+# SOCKS5 带 session 固定出口
+curl --socks5 proxy-session-reg001:password@server-ip:7779 https://httpbin.org/ip
+
 # 浏览器配置
 # SOCKS5 Host: server-ip
 # SOCKS5 Port: 7779
 # Username: username
 # Password: password
 ```
+
+如果你希望“同一个业务流程在短时间内固定走同一个上游代理”，建议在用户名里追加 session 后缀：
+
+- `proxy-session-reg001`
+- `proxy-sid-reg001`
+
+注意：
+
+- 不带 session 后缀时，行为保持原样：随机端口继续随机轮换，最低延迟端口继续选择当前最低延迟上游。
+- 带相同 session 后缀时，同一端口上的后续连接会优先复用同一条上游代理绑定。
+- 如果该上游代理失效或被移除，GoProxy 会自动重新选择新的上游并更新绑定。
 
 ### Q4: 为什么推荐"域名:端口"访问而非域名直接配置代理？
 

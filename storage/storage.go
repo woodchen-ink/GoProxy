@@ -36,7 +36,7 @@ type SourceStatus struct {
 	ConsecutiveFails int
 	LastSuccess      time.Time
 	LastFail         time.Time
-	Status           string    // active/degraded/disabled
+	Status           string // active/degraded/disabled
 	DisabledUntil    time.Time
 }
 
@@ -185,7 +185,7 @@ func (s *Storage) AddProxy(address, protocol string) error {
 		log.Printf("[storage] AddProxy %s error: %v", address, err)
 		return err
 	}
-	
+
 	// 检查是否真的插入了
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
@@ -386,6 +386,40 @@ func (s *Storage) GetLowestLatencyByProtocolExclude(protocol string, excludes []
 	}
 
 	return nil, fmt.Errorf("no %s proxy available", protocol)
+}
+
+// GetByAddress 按地址获取单个代理。
+func (s *Storage) GetByAddress(address string) (*Proxy, error) {
+	row := s.db.QueryRow(`
+		SELECT id, address, protocol, exit_ip, exit_location, latency, quality_grade,
+		       use_count, success_count, fail_count, last_used, last_check, created_at, status
+		FROM proxies
+		WHERE address = ?
+	`, address)
+
+	var p Proxy
+	if err := row.Scan(
+		&p.ID,
+		&p.Address,
+		&p.Protocol,
+		&p.ExitIP,
+		&p.ExitLocation,
+		&p.Latency,
+		&p.QualityGrade,
+		&p.UseCount,
+		&p.SuccessCount,
+		&p.FailCount,
+		&p.LastUsed,
+		&p.LastCheck,
+		&p.CreatedAt,
+		&p.Status,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("proxy not found")
+		}
+		return nil, err
+	}
+	return &p, nil
 }
 
 // Delete 立即删除指定代理
@@ -621,7 +655,7 @@ func (s *Storage) DeleteBlockedCountries(countryCodes []string) (int64, error) {
 	if len(countryCodes) == 0 {
 		return 0, nil
 	}
-	
+
 	var totalDeleted int64
 	for _, code := range countryCodes {
 		// exit_location 格式：如 "CN Beijing" 或 "HK Hong Kong"
