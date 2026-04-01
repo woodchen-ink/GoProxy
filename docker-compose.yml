@@ -20,6 +20,10 @@ services:
       - PROXY_AUTH_PASSWORD=代理密码
       - SOCKS5_DNS_MODE=local
       - SOCKS5_ALLOW_HTTP_UPSTREAM=true
+      - QUAKE_ENABLED=${QUAKE_ENABLED:-false}
+      - QUAKE_TOKEN=${QUAKE_TOKEN:-}
+      - 'QUAKE_QUERY=${QUAKE_QUERY:-service:socks5 AND response:"No authentication" AND (country_cn:"德国" OR country_cn:"法国" OR country_cn:"意大利" OR country_cn:"美国")}'
+      - QUAKE_RESULT_SIZE=${QUAKE_RESULT_SIZE:-10000}
     volumes:
       - goproxy-data:/app/data # 挂载数据卷，实现数据持久化
 
