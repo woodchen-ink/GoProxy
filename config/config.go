@@ -19,6 +19,12 @@ const (
 	SOCKS5DNSModeLocal    = "local"
 )
 
+const (
+	defaultWebUIPort  = ":7778"
+	defaultRandomPort = ":7777"
+	defaultStablePort = ":7776"
+)
+
 func dataDir() string {
 	dir := resolveDataDir(os.Getenv("DATA_DIR"), dirExists(defaultContainerDataDir))
 	_ = os.MkdirAll(dir, 0755)
@@ -47,6 +53,23 @@ func dirExists(path string) bool {
 
 func ConfigFile() string { return filepath.Join(dataDir(), "config.json") }
 
+// normalizeListenAddr 统一把纯端口值补成监听地址，保留显式 host:port 配置。
+func normalizeListenAddr(raw string, fallback string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fallback
+	}
+	if strings.Contains(trimmed, ":") {
+		return trimmed
+	}
+	return ":" + trimmed
+}
+
+// listenAddrFromEnv 读取端口环境变量，允许使用 "7777" 或 ":7777" 两种格式。
+func listenAddrFromEnv(envKey string, fallback string) string {
+	return normalizeListenAddr(os.Getenv(envKey), fallback)
+}
+
 type Config struct {
 	// WebUI 端口
 	WebUIPort string
@@ -54,16 +77,16 @@ type Config struct {
 	// WebUI 密码 SHA256 哈希
 	WebUIPasswordHash string
 
-	// 代理池本地监听端口（随机轮换模式）
+	// 混合代理端口（随机轮换模式，HTTP + SOCKS5 共用）
 	ProxyPort string
 
-	// 稳定代理端口（最低延迟模式）
+	// 混合代理端口（最低延迟模式，HTTP + SOCKS5 共用）
 	StableProxyPort string
 
-	// SOCKS5 服务端口（随机轮换模式）
+	// SOCKS5 服务端口（随机轮换模式，始终与 ProxyPort 保持一致）
 	SOCKS5Port string
 
-	// 稳定 SOCKS5 端口（最低延迟模式）
+	// 稳定 SOCKS5 端口（最低延迟模式，始终与 StableProxyPort 保持一致）
 	StableSOCKS5Port string
 
 	// 代理服务认证配置
@@ -190,6 +213,9 @@ func DefaultConfig() *Config {
 
 	socks5DNSMode := socks5DNSModeFromEnv()
 	socks5AllowHTTPUpstream := strings.EqualFold(os.Getenv("SOCKS5_ALLOW_HTTP_UPSTREAM"), "true")
+	webUIPort := listenAddrFromEnv("WEBUI_PORT", defaultWebUIPort)
+	proxyPort := listenAddrFromEnv("RANDOM_PORT", defaultRandomPort)
+	stableProxyPort := listenAddrFromEnv("STABLE_PORT", defaultStablePort)
 
 	// 读取地理过滤配置
 	blockedCountries := []string{"CN"} // 默认屏蔽中国大陆
@@ -207,12 +233,12 @@ func DefaultConfig() *Config {
 
 	return &Config{
 		// 基础服务配置
-		WebUIPort:         ":7778",
+		WebUIPort:         webUIPort,
 		WebUIPasswordHash: passwordHash(password),
-		ProxyPort:         ":7777",
-		StableProxyPort:   ":7776",
-		SOCKS5Port:        ":7779",
-		StableSOCKS5Port:  ":7780",
+		ProxyPort:         proxyPort,
+		StableProxyPort:   stableProxyPort,
+		SOCKS5Port:        proxyPort,
+		StableSOCKS5Port:  stableProxyPort,
 		DBPath:            filepath.Join(dataDir(), "proxy.db"),
 
 		// 代理认证配置
@@ -333,6 +359,10 @@ func Load() *Config {
 			}
 		}
 	}
+
+	cfg.SOCKS5Port = cfg.ProxyPort
+	cfg.StableSOCKS5Port = cfg.StableProxyPort
+
 	cfgMu.Lock()
 	globalCfg = cfg
 	cfgMu.Unlock()

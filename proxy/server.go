@@ -36,17 +36,36 @@ func New(s *storage.Storage, cfg *config.Config, mode string, port string) *Serv
 	}
 }
 
+func describeProxyMode(mode string) string {
+	if mode == "lowest-latency" {
+		return "最低延迟"
+	}
+	return "随机轮换"
+}
+
+func describeProxyAuth(cfg *config.Config) string {
+	if cfg.ProxyAuthEnabled {
+		return fmt.Sprintf("需认证 (用户: %s)", cfg.ProxyAuthUsername)
+	}
+	return "无认证"
+}
+
+// Serve 使用给定 listener 提供 HTTP 代理服务，便于与协议复用入口组合。
+func (s *Server) Serve(listener net.Listener) error {
+	return (&http.Server{Handler: s}).Serve(listener)
+}
+
 func (s *Server) Start() error {
-	modeDesc := "随机轮换"
-	if s.mode == "lowest-latency" {
-		modeDesc = "最低延迟"
+	log.Printf("proxy server listening on %s [%s] [%s]",
+		s.port, describeProxyMode(s.mode), describeProxyAuth(s.cfg))
+
+	listener, err := net.Listen("tcp", s.port)
+	if err != nil {
+		return err
 	}
-	authStatus := "无认证"
-	if s.cfg.ProxyAuthEnabled {
-		authStatus = fmt.Sprintf("需认证 (用户: %s)", s.cfg.ProxyAuthUsername)
-	}
-	log.Printf("proxy server listening on %s [%s] [%s]", s.port, modeDesc, authStatus)
-	return http.ListenAndServe(s.port, s)
+	defer listener.Close()
+
+	return s.Serve(listener)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

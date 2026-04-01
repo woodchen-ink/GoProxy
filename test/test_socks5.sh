@@ -4,14 +4,14 @@
  # @Description: ...
  # @Date: 2026-03-29 23:14:32
  # @Author: isboyjc
- # @LastEditors: isboyjc
+# @LastEditors: isboyjc
 ### 
 
 # GoProxy SOCKS5 代理测试脚本
-# 用法: ./test_socks5.sh [端口号，默认7779]
+# 用法: ./test_socks5.sh [端口号，默认7777]
 
 PROXY_HOST="${PROXY_HOST:-127.0.0.1}"
-PROXY_PORT="${1:-7779}"
+PROXY_PORT="${1:-7777}"
 TEST_URL="https://httpbin.org/ip"
 DELAY=1
 

@@ -35,15 +35,8 @@ func NewSOCKS5(s *storage.Storage, cfg *config.Config, mode string, port string)
 
 // Start 启动 SOCKS5 服务器
 func (s *SOCKS5Server) Start() error {
-	modeDesc := "随机轮换"
-	if s.mode == "lowest-latency" {
-		modeDesc = "最低延迟"
-	}
-	authStatus := "无认证"
-	if s.cfg.ProxyAuthEnabled {
-		authStatus = fmt.Sprintf("需认证 (用户: %s)", s.cfg.ProxyAuthUsername)
-	}
-	log.Printf("socks5 server listening on %s [%s] [%s]", s.port, modeDesc, authStatus)
+	log.Printf("socks5 server listening on %s [%s] [%s]",
+		s.port, describeProxyMode(s.mode), describeProxyAuth(s.cfg))
 
 	listener, err := net.Listen("tcp", s.port)
 	if err != nil {

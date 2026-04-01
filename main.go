@@ -80,6 +80,10 @@ func main() {
 	socks5RandomServer := proxy.NewSOCKS5(store, cfg, "random", cfg.SOCKS5Port)
 	socks5StableServer := proxy.NewSOCKS5(store, cfg, "lowest-latency", cfg.StableSOCKS5Port)
 
+	// 创建双协议混合入口：每种模式一个端口，同时支持 HTTP 和 SOCKS5。
+	randomMixedServer := proxy.NewMixed(randomServer, socks5RandomServer, cfg.ProxyPort)
+	stableMixedServer := proxy.NewMixed(stableServer, socks5StableServer, cfg.StableProxyPort)
+
 	// 配置变更通知 channel
 	configChanged := make(chan struct{}, 1)
 
@@ -111,30 +115,16 @@ func main() {
 	// 监听配置变更
 	go watchConfigChanges(configChanged, poolMgr)
 
-	// 启动 HTTP 稳定代理服务（最低延迟模式）
+	// 启动稳定混合代理服务（最低延迟模式）
 	go func() {
-		if err := stableServer.Start(); err != nil {
-			log.Fatalf("stable http proxy server: %v", err)
+		if err := stableMixedServer.Start(); err != nil {
+			log.Fatalf("stable mixed proxy server: %v", err)
 		}
 	}()
 
-	// 启动 SOCKS5 稳定代理服务（最低延迟模式）
-	go func() {
-		if err := socks5StableServer.Start(); err != nil {
-			log.Fatalf("stable socks5 proxy server: %v", err)
-		}
-	}()
-
-	// 启动 SOCKS5 随机代理服务
-	go func() {
-		if err := socks5RandomServer.Start(); err != nil {
-			log.Fatalf("random socks5 proxy server: %v", err)
-		}
-	}()
-
-	// 启动 HTTP 随机代理服务（阻塞）
-	if err := randomServer.Start(); err != nil {
-		log.Fatalf("random http proxy server: %v", err)
+	// 启动随机混合代理服务（阻塞）
+	if err := randomMixedServer.Start(); err != nil {
+		log.Fatalf("random mixed proxy server: %v", err)
 	}
 }
 

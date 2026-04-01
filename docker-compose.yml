@@ -4,14 +4,15 @@ services:
     container_name: goproxy
     restart: unless-stopped
     ports:
-      - "37776:7776" #http最低
-      - "37777:7777" #http随机
-      - "37778:7778" # Web UI 面板
-      - "37779:7779" # socks5随机代理
-      - "37780:7780" # socks5最低延迟代理
+      - "${STABLE_PORT:-7776}:${STABLE_PORT:-7776}" # http+socks5 最低延迟
+      - "${RANDOM_PORT:-7777}:${RANDOM_PORT:-7777}" # http+socks5 随机轮换
+      - "${WEBUI_PORT:-7778}:${WEBUI_PORT:-7778}" # Web UI 面板
     environment:
       - TZ=${TZ:-Asia/Shanghai} # 容器时区设置，默认使用上海时间
       - DATA_DIR=/app/data
+      - STABLE_PORT=${STABLE_PORT:-7776}
+      - RANDOM_PORT=${RANDOM_PORT:-7777}
+      - WEBUI_PORT=${WEBUI_PORT:-7778}
       - WEBUI_PASSWORD=web密码
       - BLOCKED_COUNTRIES=CN,RU,HK
       - PROXY_AUTH_ENABLED=true

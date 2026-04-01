@@ -113,3 +113,49 @@ func TestDataDirCreatesDirectory(t *testing.T) {
 		t.Fatalf("dataDir() did not create %q", customDir)
 	}
 }
+
+// TestNormalizeListenAddr 保证环境变量里的端口写法会统一成监听地址。
+func TestNormalizeListenAddr(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		fallback string
+		want     string
+	}{
+		{name: "empty uses fallback", input: "", fallback: ":7777", want: ":7777"},
+		{name: "plain port", input: "7777", fallback: ":7776", want: ":7777"},
+		{name: "full addr", input: "0.0.0.0:7777", fallback: ":7776", want: "0.0.0.0:7777"},
+		{name: "trim spaces", input: "  :7788  ", fallback: ":7776", want: ":7788"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeListenAddr(tc.input, tc.fallback); got != tc.want {
+				t.Fatalf("normalizeListenAddr(%q, %q) = %q, want %q", tc.input, tc.fallback, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDefaultConfigForcesMixedProxyPorts 保证 HTTP 和 SOCKS5 始终复用随机/最低两个端口。
+func TestDefaultConfigForcesMixedProxyPorts(t *testing.T) {
+	t.Setenv("RANDOM_PORT", "9001")
+	t.Setenv("STABLE_PORT", "127.0.0.1:9002")
+	t.Setenv("SOCKS5_RANDOM_PORT", "9101")
+	t.Setenv("SOCKS5_STABLE_PORT", "127.0.0.1:9102")
+
+	cfg := DefaultConfig()
+
+	if cfg.ProxyPort != ":9001" {
+		t.Fatalf("ProxyPort = %q, want %q", cfg.ProxyPort, ":9001")
+	}
+	if cfg.StableProxyPort != "127.0.0.1:9002" {
+		t.Fatalf("StableProxyPort = %q, want %q", cfg.StableProxyPort, "127.0.0.1:9002")
+	}
+	if cfg.SOCKS5Port != cfg.ProxyPort {
+		t.Fatalf("SOCKS5Port = %q, want same as ProxyPort %q", cfg.SOCKS5Port, cfg.ProxyPort)
+	}
+	if cfg.StableSOCKS5Port != cfg.StableProxyPort {
+		t.Fatalf("StableSOCKS5Port = %q, want same as StableProxyPort %q", cfg.StableSOCKS5Port, cfg.StableProxyPort)
+	}
+}
