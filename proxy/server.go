@@ -224,9 +224,15 @@ func (s *Server) selectProxy(excludes []string, sessionID string) (*storage.Prox
 		sessionID,
 		excludes,
 		s.storage.GetByAddress,
-		func(excluded []string) (*storage.Proxy, error) {
+		func(excluded []string, exitIPExcludes []string) (*storage.Proxy, error) {
 			if s.mode == "lowest-latency" {
+				if len(exitIPExcludes) > 0 {
+					return s.storage.GetLowestLatencyExcludeExitIPs(excluded, exitIPExcludes)
+				}
 				return s.storage.GetLowestLatencyExclude(excluded)
+			}
+			if len(exitIPExcludes) > 0 {
+				return s.storage.GetRandomExcludeExitIPs(excluded, exitIPExcludes)
 			}
 			return s.storage.GetRandomExclude(excluded)
 		},

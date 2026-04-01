@@ -287,6 +287,52 @@ func (s *Storage) GetAll() ([]Proxy, error) {
 	return proxies, nil
 }
 
+func buildExcludeSet(values []string) map[string]struct{} {
+	if len(values) == 0 {
+		return nil
+	}
+
+	excludeSet := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		excludeSet[value] = struct{}{}
+	}
+	return excludeSet
+}
+
+func filterSelectableProxies(proxies []Proxy, protocol string, excludes []string, exitIPExcludes []string) []Proxy {
+	addressExcludeSet := buildExcludeSet(excludes)
+	exitIPExcludeSet := buildExcludeSet(exitIPExcludes)
+
+	available := make([]Proxy, 0, len(proxies))
+	for _, p := range proxies {
+		if protocol != "" && p.Protocol != protocol {
+			continue
+		}
+		if _, excluded := addressExcludeSet[p.Address]; excluded {
+			continue
+		}
+		if p.ExitIP != "" {
+			if _, excluded := exitIPExcludeSet[p.ExitIP]; excluded {
+				continue
+			}
+		}
+		available = append(available, p)
+	}
+	return available
+}
+
+func pickRandomProxy(proxies []Proxy) (*Proxy, error) {
+	if len(proxies) == 0 {
+		return nil, fmt.Errorf("no available proxy")
+	}
+
+	proxy := proxies[rand.Intn(len(proxies))]
+	return &proxy, nil
+}
+
 // GetRandomExclude 排除指定地址随机取一个
 func (s *Storage) GetRandomExclude(excludes []string) (*Proxy, error) {
 	proxies, err := s.GetAll()
@@ -294,25 +340,24 @@ func (s *Storage) GetRandomExclude(excludes []string) (*Proxy, error) {
 		return nil, err
 	}
 
-	excludeMap := make(map[string]bool)
-	for _, e := range excludes {
-		excludeMap[e] = true
-	}
-
-	var available []Proxy
-	for _, p := range proxies {
-		if !excludeMap[p.Address] {
-			available = append(available, p)
-		}
-	}
+	available := filterSelectableProxies(proxies, "", excludes, nil)
 
 	if len(available) == 0 {
 		// 没有可排除的了，随机取任意一个
 		return s.GetRandom()
 	}
 
-	p := available[rand.Intn(len(available))]
-	return &p, nil
+	return pickRandomProxy(available)
+}
+
+// GetRandomExcludeExitIPs 排除指定地址和出口 IP 后随机取一个。
+func (s *Storage) GetRandomExcludeExitIPs(excludes []string, exitIPExcludes []string) (*Proxy, error) {
+	proxies, err := s.GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	return pickRandomProxy(filterSelectableProxies(proxies, "", excludes, exitIPExcludes))
 }
 
 // GetLowestLatencyExclude 排除指定地址后获取延迟最低的代理
@@ -322,17 +367,25 @@ func (s *Storage) GetLowestLatencyExclude(excludes []string) (*Proxy, error) {
 		return nil, err
 	}
 
-	excludeMap := make(map[string]bool)
-	for _, e := range excludes {
-		excludeMap[e] = true
+	// GetAll() 已经按 latency ASC 排序，找到第一个不在排除列表中的
+	for _, p := range filterSelectableProxies(proxies, "", excludes, nil) {
+		proxy := p
+		return &proxy, nil
 	}
 
-	// GetAll() 已经按 latency ASC 排序，找到第一个不在排除列表中的
-	for _, p := range proxies {
-		if !excludeMap[p.Address] {
-			proxy := p
-			return &proxy, nil
-		}
+	return nil, fmt.Errorf("no available proxy")
+}
+
+// GetLowestLatencyExcludeExitIPs 排除指定地址和出口 IP 后获取延迟最低的代理。
+func (s *Storage) GetLowestLatencyExcludeExitIPs(excludes []string, exitIPExcludes []string) (*Proxy, error) {
+	proxies, err := s.GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, p := range filterSelectableProxies(proxies, "", excludes, exitIPExcludes) {
+		proxy := p
+		return &proxy, nil
 	}
 
 	return nil, fmt.Errorf("no available proxy")
@@ -345,18 +398,24 @@ func (s *Storage) GetRandomByProtocolExclude(protocol string, excludes []string)
 		return nil, err
 	}
 
-	excludeMap := make(map[string]bool)
-	for _, e := range excludes {
-		excludeMap[e] = true
+	available := filterSelectableProxies(proxies, protocol, excludes, nil)
+
+	if len(available) == 0 {
+		return nil, fmt.Errorf("no %s proxy available", protocol)
 	}
 
-	var available []Proxy
-	for _, p := range proxies {
-		if p.Protocol == protocol && !excludeMap[p.Address] {
-			available = append(available, p)
-		}
+	proxy := available[time.Now().UnixNano()%int64(len(available))]
+	return &proxy, nil
+}
+
+// GetRandomByProtocolExcludeExitIPs 按协议排除指定地址和出口 IP 后随机取一个。
+func (s *Storage) GetRandomByProtocolExcludeExitIPs(protocol string, excludes []string, exitIPExcludes []string) (*Proxy, error) {
+	proxies, err := s.GetAll()
+	if err != nil {
+		return nil, err
 	}
 
+	available := filterSelectableProxies(proxies, protocol, excludes, exitIPExcludes)
 	if len(available) == 0 {
 		return nil, fmt.Errorf("no %s proxy available", protocol)
 	}
@@ -372,17 +431,25 @@ func (s *Storage) GetLowestLatencyByProtocolExclude(protocol string, excludes []
 		return nil, err
 	}
 
-	excludeMap := make(map[string]bool)
-	for _, e := range excludes {
-		excludeMap[e] = true
+	// GetAll() 已经按 latency ASC 排序，找到第一个匹配协议且不在排除列表中的
+	for _, p := range filterSelectableProxies(proxies, protocol, excludes, nil) {
+		proxy := p
+		return &proxy, nil
 	}
 
-	// GetAll() 已经按 latency ASC 排序，找到第一个匹配协议且不在排除列表中的
-	for _, p := range proxies {
-		if p.Protocol == protocol && !excludeMap[p.Address] {
-			proxy := p
-			return &proxy, nil
-		}
+	return nil, fmt.Errorf("no %s proxy available", protocol)
+}
+
+// GetLowestLatencyByProtocolExcludeExitIPs 按协议排除指定地址和出口 IP 后获取最低延迟代理。
+func (s *Storage) GetLowestLatencyByProtocolExcludeExitIPs(protocol string, excludes []string, exitIPExcludes []string) (*Proxy, error) {
+	proxies, err := s.GetAll()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, p := range filterSelectableProxies(proxies, protocol, excludes, exitIPExcludes) {
+		proxy := p
+		return &proxy, nil
 	}
 
 	return nil, fmt.Errorf("no %s proxy available", protocol)

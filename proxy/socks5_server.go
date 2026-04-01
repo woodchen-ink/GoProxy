@@ -139,16 +139,28 @@ func (s *SOCKS5Server) selectUpstreamProxy(excludes []string, sessionID string) 
 			}
 			return proxyItem, nil
 		},
-		func(excluded []string) (*storage.Proxy, error) {
+		func(excluded []string, exitIPExcludes []string) (*storage.Proxy, error) {
 			if s.cfg.SOCKS5AllowHTTPUpstream {
 				if s.mode == "lowest-latency" {
+					if len(exitIPExcludes) > 0 {
+						return s.storage.GetLowestLatencyExcludeExitIPs(excluded, exitIPExcludes)
+					}
 					return s.storage.GetLowestLatencyExclude(excluded)
+				}
+				if len(exitIPExcludes) > 0 {
+					return s.storage.GetRandomExcludeExitIPs(excluded, exitIPExcludes)
 				}
 				return s.storage.GetRandomExclude(excluded)
 			}
 
 			if s.mode == "lowest-latency" {
+				if len(exitIPExcludes) > 0 {
+					return s.storage.GetLowestLatencyByProtocolExcludeExitIPs("socks5", excluded, exitIPExcludes)
+				}
 				return s.storage.GetLowestLatencyByProtocolExclude("socks5", excluded)
+			}
+			if len(exitIPExcludes) > 0 {
+				return s.storage.GetRandomByProtocolExcludeExitIPs("socks5", excluded, exitIPExcludes)
 			}
 			return s.storage.GetRandomByProtocolExclude("socks5", excluded)
 		},
