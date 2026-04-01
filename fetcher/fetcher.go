@@ -2,6 +2,7 @@ package fetcher
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -129,7 +130,9 @@ func (f *Fetcher) fetchFromSources(sources []Source) ([]storage.Proxy, error) {
 		r := <-ch
 		if r.err != nil {
 			log.Printf("[fetch] ❌ %s error: %v", r.source.label(), r.err)
-			f.recordSourceFail(r.source)
+			if shouldRecordSourceFailure(r.err) {
+				f.recordSourceFail(r.source)
+			}
 			continue
 		}
 
@@ -253,6 +256,27 @@ func (f *Fetcher) recordSourceFail(src Source) {
 	}
 
 	f.sourceManager.RecordFail(src.statusKey(), failThreshold, disableThreshold, cooldownMinutes)
+}
+
+type sourceFetchError struct {
+	err           error
+	recordFailure bool
+}
+
+func (e *sourceFetchError) Error() string {
+	return e.err.Error()
+}
+
+func (e *sourceFetchError) Unwrap() error {
+	return e.err
+}
+
+func shouldRecordSourceFailure(err error) bool {
+	var fetchErr *sourceFetchError
+	if errors.As(err, &fetchErr) {
+		return fetchErr.recordFailure
+	}
+	return true
 }
 
 // parseHTMLProxyList extracts embedded proxy URLs from HTML sources.

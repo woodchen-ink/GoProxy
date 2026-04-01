@@ -24,13 +24,10 @@ type quakeSearchRequest struct {
 }
 
 type quakeSearchResponse struct {
-	Code    any    `json:"code"`
-	Message string `json:"message"`
-	Data    []struct {
-		IP   string `json:"ip"`
-		Port int    `json:"port"`
-	} `json:"data"`
-	Meta struct {
+	Code    any             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
+	Meta    struct {
 		Pagination struct {
 			Count int `json:"count"`
 			Total int `json:"total"`
@@ -103,13 +100,28 @@ func (f *Fetcher) fetchFromQuake(src Source) ([]storage.Proxy, error) {
 		return nil, fmt.Errorf("decode quake response: %w", err)
 	}
 
-	if code := quakeResponseCode(payload.Code); code != "0" {
-		return nil, fmt.Errorf("quake api error [%s]: %s", code, strings.TrimSpace(payload.Message))
+	code := quakeResponseCode(payload.Code)
+	if code != "0" {
+		return nil, &sourceFetchError{
+			err:           fmt.Errorf("quake api error [%s]: %s", code, strings.TrimSpace(payload.Message)),
+			recordFailure: shouldRecordQuakeFailure(code),
+		}
 	}
 
-	proxies := make([]storage.Proxy, 0, len(payload.Data))
-	seen := make(map[string]struct{}, len(payload.Data))
-	for _, item := range payload.Data {
+	var rows []struct {
+		IP   string `json:"ip"`
+		Port int    `json:"port"`
+	}
+	if len(payload.Data) == 0 || string(payload.Data) == "null" {
+		return nil, nil
+	}
+	if err := json.Unmarshal(payload.Data, &rows); err != nil {
+		return nil, fmt.Errorf("decode quake data: %w", err)
+	}
+
+	proxies := make([]storage.Proxy, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, item := range rows {
 		if item.IP == "" || item.Port <= 0 || item.Port > 65535 {
 			continue
 		}
@@ -127,6 +139,16 @@ func (f *Fetcher) fetchFromQuake(src Source) ([]storage.Proxy, error) {
 	}
 
 	return proxies, nil
+}
+
+func shouldRecordQuakeFailure(code string) bool {
+	switch code {
+	case "q3005":
+		// 调用过快属于账号配额/频控问题，不代表源本身失效。
+		return false
+	default:
+		return true
+	}
 }
 
 func normalizeQuakeResultSize(size int) int {
