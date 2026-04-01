@@ -10,58 +10,28 @@ import (
 	"strings"
 	"time"
 
+	"goproxy/config"
 	"goproxy/storage"
 )
-
-// 代理来源定义
-type Source struct {
-	URL      string
-	Protocol string // http 或 socks5
-}
-
-// 快速更新源（5-30分钟更新）- 用于紧急和补充模式
-var fastUpdateSources = []Source{
-	// proxifly - 每5分钟更新
-	{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/http/data.txt", "http"},
-	{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/socks4/data.txt", "socks5"},
-	{"https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/socks5/data.txt", "socks5"},
-	// socks5-proxy.github.io - HTML 页面内嵌 socks5:// 地址
-	{"https://socks5-proxy.github.io/", "socks5"},
-	// ProxyScraper - 每30分钟更新
-	{"https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/http.txt", "http"},
-	{"https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks4.txt", "socks5"},
-	{"https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks5.txt", "socks5"},
-	// monosans - 每小时更新
-	{"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", "http"},
-}
-
-// 慢速更新源（每天更新）- 用于优化轮换模式
-var slowUpdateSources = []Source{
-	// TheSpeedX - 每天更新
-	{"https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt", "http"},
-	{"https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks4.txt", "socks5"},
-	{"https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt", "socks5"},
-	// monosans SOCKS
-	{"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks4.txt", "socks5"},
-	{"https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt", "socks5"},
-	// databay-labs - 备用源
-	{"https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/http.txt", "http"},
-	{"https://cdn.jsdelivr.net/gh/databay-labs/free-proxy-list/socks5.txt", "socks5"},
-}
-
-// 所有源
-var allSources = append(fastUpdateSources, slowUpdateSources...)
 
 var htmlProxyURLRegex = regexp.MustCompile(`(?i)(socks5)://((?:\d{1,3}\.){3}\d{1,3}:\d{1,5})`)
 
 type Fetcher struct {
+	cfg           *config.Config
+	fastSources   []Source
+	slowSources   []Source
 	sources       []Source
 	client        *http.Client
 	sourceManager *SourceManager
 }
 
-func New(httpURL, socks5URL string, sourceManager *SourceManager) *Fetcher {
+func New(cfg *config.Config, sourceManager *SourceManager) *Fetcher {
+	fastSources, slowSources, allSources := buildSourceCatalog(cfg)
+
 	return &Fetcher{
+		cfg:           cfg,
+		fastSources:   fastSources,
+		slowSources:   slowSources,
 		sources:       allSources,
 		sourceManager: sourceManager,
 		client: &http.Client{
@@ -77,21 +47,21 @@ func (f *Fetcher) FetchSmart(mode string, preferredProtocol string) ([]storage.P
 	switch mode {
 	case "emergency":
 		// 紧急模式：忽略断路器，强制使用所有源（包括被禁用的）
-		sources = f.filterAvailableSources(allSources, preferredProtocol, true)
+		sources = f.filterAvailableSources(f.sources, preferredProtocol, true)
 		log.Printf("[fetch] 🚨 紧急模式: 使用 %d 个源（忽略断路器）", len(sources))
 
 	case "refill":
 		// 补充模式：使用快更新源
-		sources = f.filterAvailableSources(fastUpdateSources, preferredProtocol, false)
+		sources = f.filterAvailableSources(f.fastSources, preferredProtocol, false)
 		log.Printf("[fetch] 🔄 补充模式: 使用 %d 个快更新源", len(sources))
 
 	case "optimize":
 		// 优化模式：随机选择2-3个慢更新源
-		sources = f.selectRandomSources(slowUpdateSources, 3, preferredProtocol)
+		sources = f.selectRandomSources(f.slowSources, 3, preferredProtocol)
 		log.Printf("[fetch] ⚡ 优化模式: 使用 %d 个源", len(sources))
 
 	default:
-		sources = f.filterAvailableSources(fastUpdateSources, preferredProtocol, false)
+		sources = f.filterAvailableSources(f.fastSources, preferredProtocol, false)
 	}
 
 	if len(sources) == 0 {
@@ -107,7 +77,7 @@ func (f *Fetcher) filterAvailableSources(sources []Source, preferredProtocol str
 	var available []Source
 	for _, src := range sources {
 		// 检查断路器（紧急模式下忽略）
-		if !ignoreCircuitBreaker && f.sourceManager != nil && !f.sourceManager.CanUseSource(src.URL) {
+		if !ignoreCircuitBreaker && f.sourceManager != nil && !f.sourceManager.CanUseSource(src.statusKey()) {
 			continue
 		}
 		// 如果指定了协议偏好，优先该协议的源
@@ -148,7 +118,7 @@ func (f *Fetcher) fetchFromSources(sources []Source) ([]storage.Proxy, error) {
 	ch := make(chan result, len(sources))
 	for _, src := range sources {
 		go func(s Source) {
-			proxies, err := f.fetchFromURL(s.URL, s.Protocol)
+			proxies, err := f.fetchFromSource(s)
 			ch <- result{proxies: proxies, source: s, err: err}
 		}(src)
 	}
@@ -158,17 +128,13 @@ func (f *Fetcher) fetchFromSources(sources []Source) ([]storage.Proxy, error) {
 	for range sources {
 		r := <-ch
 		if r.err != nil {
-			log.Printf("[fetch] ❌ %s error: %v", r.source.URL, r.err)
-			if f.sourceManager != nil {
-				f.sourceManager.RecordFail(r.source.URL, 3, 5, 30)
-			}
+			log.Printf("[fetch] ❌ %s error: %v", r.source.label(), r.err)
+			f.recordSourceFail(r.source)
 			continue
 		}
 
 		// 记录成功
-		if f.sourceManager != nil {
-			f.sourceManager.RecordSuccess(r.source.URL)
-		}
+		f.recordSourceSuccess(r.source)
 
 		// 去重
 		var deduped []storage.Proxy
@@ -178,7 +144,7 @@ func (f *Fetcher) fetchFromSources(sources []Source) ([]storage.Proxy, error) {
 				deduped = append(deduped, p)
 			}
 		}
-		log.Printf("[fetch] ✅ %d 个 %s 代理 from %s", len(deduped), r.source.Protocol, r.source.URL)
+		log.Printf("[fetch] ✅ %d 个 %s 代理 from %s", len(deduped), r.source.Protocol, r.source.label())
 		all = append(all, deduped...)
 	}
 
@@ -200,7 +166,7 @@ func (f *Fetcher) Fetch() ([]storage.Proxy, error) {
 	ch := make(chan result, len(f.sources))
 	for _, src := range f.sources {
 		go func(s Source) {
-			proxies, err := f.fetchFromURL(s.URL, s.Protocol)
+			proxies, err := f.fetchFromSource(s)
 			ch <- result{proxies: proxies, source: s, err: err}
 		}(src)
 	}
@@ -210,7 +176,7 @@ func (f *Fetcher) Fetch() ([]storage.Proxy, error) {
 	for range f.sources {
 		r := <-ch
 		if r.err != nil {
-			log.Printf("fetch %s error: %v", r.source.URL, r.err)
+			log.Printf("fetch %s error: %v", r.source.label(), r.err)
 			continue
 		}
 		// 去重
@@ -221,7 +187,7 @@ func (f *Fetcher) Fetch() ([]storage.Proxy, error) {
 				deduped = append(deduped, p)
 			}
 		}
-		log.Printf("fetched %d %s proxies from %s", len(deduped), r.source.Protocol, r.source.URL)
+		log.Printf("fetched %d %s proxies from %s", len(deduped), r.source.Protocol, r.source.label())
 		all = append(all, deduped...)
 	}
 
@@ -232,7 +198,16 @@ func (f *Fetcher) Fetch() ([]storage.Proxy, error) {
 	return all, nil
 }
 
-func (f *Fetcher) fetchFromURL(url, protocol string) ([]storage.Proxy, error) {
+func (f *Fetcher) fetchFromSource(src Source) ([]storage.Proxy, error) {
+	switch src.Type {
+	case sourceTypeQuake:
+		return f.fetchFromQuake(src)
+	default:
+		return f.fetchFromURL(src.URL, src.Protocol, src.Type)
+	}
+}
+
+func (f *Fetcher) fetchFromURL(url, protocol string, sourceType SourceType) ([]storage.Proxy, error) {
 	resp, err := f.client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("get %s: %w", url, err)
@@ -243,11 +218,41 @@ func (f *Fetcher) fetchFromURL(url, protocol string) ([]storage.Proxy, error) {
 		return nil, fmt.Errorf("unexpected status %d from %s", resp.StatusCode, url)
 	}
 
-	if strings.Contains(url, "socks5-proxy.github.io") {
+	if sourceType == sourceTypeHTML || strings.Contains(url, "socks5-proxy.github.io") {
 		return parseHTMLProxyList(resp.Body, protocol)
 	}
 
 	return parseProxyList(resp.Body, protocol)
+}
+
+func (f *Fetcher) recordSourceSuccess(src Source) {
+	if f.sourceManager == nil {
+		return
+	}
+	f.sourceManager.RecordSuccess(src.statusKey())
+}
+
+func (f *Fetcher) recordSourceFail(src Source) {
+	if f.sourceManager == nil {
+		return
+	}
+
+	failThreshold := 3
+	disableThreshold := 5
+	cooldownMinutes := 30
+	if f.cfg != nil {
+		if f.cfg.SourceFailThreshold > 0 {
+			failThreshold = f.cfg.SourceFailThreshold
+		}
+		if f.cfg.SourceDisableThreshold > 0 {
+			disableThreshold = f.cfg.SourceDisableThreshold
+		}
+		if f.cfg.SourceCooldownMinutes > 0 {
+			cooldownMinutes = f.cfg.SourceCooldownMinutes
+		}
+	}
+
+	f.sourceManager.RecordFail(src.statusKey(), failThreshold, disableThreshold, cooldownMinutes)
 }
 
 // parseHTMLProxyList extracts embedded proxy URLs from HTML sources.

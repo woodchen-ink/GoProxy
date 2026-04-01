@@ -40,6 +40,9 @@ func main() {
 		cfg.PoolMaxSize, cfg.PoolHTTPRatio*100, (1-cfg.PoolHTTPRatio)*100, cfg.MaxLatencyMs)
 	log.Printf("[main] 🔎 SOCKS5 DNS 模式: %s", cfg.SOCKS5DNSMode)
 	log.Printf("[main] 🔀 SOCKS5 允许 HTTP 上游: %t", cfg.SOCKS5AllowHTTPUpstream)
+	if cfg.QuakeEnabled {
+		log.Printf("[main] 🌐 Quake 抓取源已启用: size=%d query=%q", cfg.QuakeResultSize, cfg.QuakeQuery)
+	}
 
 	// 初始化存储
 	store, err := storage.New(cfg.DBPath)
@@ -53,7 +56,7 @@ func main() {
 
 	// 初始化核心模块
 	sourceMgr := fetcher.NewSourceManager(store.GetDB())
-	fetch := fetcher.New(cfg.HTTPSourceURL, cfg.SOCKS5SourceURL, sourceMgr)
+	fetch := fetcher.New(cfg, sourceMgr)
 	validate := validator.New(cfg.ValidateConcurrency, cfg.ValidateTimeout, cfg.ValidateURL)
 	poolMgr := pool.NewManager(store, cfg)
 	healthChecker := checker.NewHealthChecker(store, validate, cfg, poolMgr)

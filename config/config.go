@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -68,6 +69,28 @@ func normalizeListenAddr(raw string, fallback string) string {
 // listenAddrFromEnv 读取端口环境变量，允许使用 "7777" 或 ":7777" 两种格式。
 func listenAddrFromEnv(envKey string, fallback string) string {
 	return normalizeListenAddr(os.Getenv(envKey), fallback)
+}
+
+// stringFromEnv trims whitespace and falls back when the env var is empty.
+func stringFromEnv(envKey string, fallback string) string {
+	if raw := strings.TrimSpace(os.Getenv(envKey)); raw != "" {
+		return raw
+	}
+	return fallback
+}
+
+// positiveIntFromEnv reads a positive integer env var and falls back on invalid values.
+func positiveIntFromEnv(envKey string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(envKey))
+	if raw == "" {
+		return fallback
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 type Config struct {
@@ -140,6 +163,12 @@ type Config struct {
 	SourceFailThreshold    int // 源降级阈值（默认3）
 	SourceDisableThreshold int // 源禁用阈值（默认5）
 	SourceCooldownMinutes  int // 源禁用冷却时间（默认30）
+
+	// ========== 可选抓取源配置 ==========
+	QuakeEnabled    bool   // 是否启用 Quake API 抓取源（仅环境变量）
+	QuakeToken      string // Quake API Token（仅环境变量）
+	QuakeQuery      string // Quake 检索语法（仅环境变量）
+	QuakeResultSize int    // Quake 单次抓取条数（最大10000，仅环境变量）
 
 	// ========== 兼容旧配置 ==========
 	MaxResponseMs int // 已废弃，使用 MaxLatencyMs 替代
@@ -216,6 +245,16 @@ func DefaultConfig() *Config {
 	webUIPort := listenAddrFromEnv("WEBUI_PORT", defaultWebUIPort)
 	proxyPort := listenAddrFromEnv("RANDOM_PORT", defaultRandomPort)
 	stableProxyPort := listenAddrFromEnv("STABLE_PORT", defaultStablePort)
+	quakeToken := strings.TrimSpace(os.Getenv("QUAKE_TOKEN"))
+	quakeEnabled := strings.EqualFold(os.Getenv("QUAKE_ENABLED"), "true")
+	if quakeToken != "" && strings.TrimSpace(os.Getenv("QUAKE_ENABLED")) == "" {
+		quakeEnabled = true
+	}
+	quakeQuery := stringFromEnv("QUAKE_QUERY", `service:socks5 AND response:"No authentication"`)
+	quakeResultSize := positiveIntFromEnv("QUAKE_RESULT_SIZE", 10000)
+	if quakeResultSize > 10000 {
+		quakeResultSize = 10000
+	}
 
 	// 读取地理过滤配置
 	blockedCountries := []string{"CN"} // 默认屏蔽中国大陆
@@ -285,6 +324,10 @@ func DefaultConfig() *Config {
 		SourceFailThreshold:    3,  // 失败3次降级
 		SourceDisableThreshold: 5,  // 失败5次禁用
 		SourceCooldownMinutes:  30, // 禁用30分钟
+		QuakeEnabled:           quakeEnabled,
+		QuakeToken:             quakeToken,
+		QuakeQuery:             quakeQuery,
+		QuakeResultSize:        quakeResultSize,
 
 		// 兼容旧配置
 		MaxResponseMs:   5000,

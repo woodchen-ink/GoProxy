@@ -492,6 +492,10 @@ docker compose up -d
 | `PROXY_AUTH_PASSWORD` | 空 | 代理认证密码 |
 | `SOCKS5_DNS_MODE` | `fallback` | SOCKS5 域名解析模式：`remote`=上游解析，`fallback`=失败后本地兜底，`local`=始终本地解析 |
 | `SOCKS5_ALLOW_HTTP_UPSTREAM` | `false` | 是否允许下游 SOCKS5 复用上游 HTTP 代理（通过 CONNECT 转发） |
+| `QUAKE_ENABLED` | `false` | 是否启用 Quake API 作为额外 SOCKS5 抓取源 |
+| `QUAKE_TOKEN` | 空 | Quake API Token；若设置且未显式关闭，抓取器会自动启用 Quake |
+| `QUAKE_QUERY` | `service:socks5 AND response:"No authentication"` | Quake 检索语法，可改成欧洲/美国等更窄范围 |
+| `QUAKE_RESULT_SIZE` | `10000` | Quake 单次抓取条数，上限 10000 |
 | `WEBUI_PASSWORD` | `goproxy` | WebUI 登录密码 |
 | `STABLE_PORT` | `7776` | HTTP + SOCKS5 最低延迟混合端口 |
 | `RANDOM_PORT` | `7777` | HTTP + SOCKS5 随机轮换混合端口 |
@@ -740,6 +744,10 @@ proxies = {'http': 'socks5://myuser:secure_pass_123@server-ip:7777', 'https': 's
 | `PROXY_AUTH_USERNAME` | `proxy` | 代理认证用户名 |
 | `PROXY_AUTH_PASSWORD` | 空 | 代理认证密码（原始密码，自动哈希） |
 | `BLOCKED_COUNTRIES` | `CN` | 屏蔽的国家代码（逗号分隔，如 `CN,RU,KP`，留空=不屏蔽） |
+| `QUAKE_ENABLED` | `false` | 是否启用 Quake API 作为额外 SOCKS5 抓取源 |
+| `QUAKE_TOKEN` | 空 | Quake API Token（仅环境变量，不写入 `config.json`） |
+| `QUAKE_QUERY` | `service:socks5 AND response:"No authentication"` | Quake 检索语法 |
+| `QUAKE_RESULT_SIZE` | `10000` | Quake 单次抓取条数，上限 10000 |
 
 ## 🎨 WebUI 使用指南
 
