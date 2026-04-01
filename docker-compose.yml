@@ -4,9 +4,11 @@ services:
     container_name: goproxy
     restart: unless-stopped
     ports:
-      - "7778:7778" # Web UI 面板
-      - "7779:7779" # socks5随机代理
-      - "7780:7780" # socks5最低延迟代理
+      - "37776:7776" #http最低
+      - "37777:7777" #http随机
+      - "37778:7778" # Web UI 面板
+      - "37779:7779" # socks5随机代理
+      - "37780:7780" # socks5最低延迟代理
     environment:
       - TZ=${TZ:-Asia/Shanghai} # 容器时区设置，默认使用上海时间
       - DATA_DIR=/app/data

@@ -131,7 +131,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, sessionID st
 
 		resp, err := client.Do(req)
 		if err != nil {
-			log.Printf("[proxy] %s via %s failed, removing", r.RequestURI, p.Address)
+			log.Printf("[proxy] %s via %s failed: %v, removing", r.RequestURI, p.Address, err)
 			s.storage.Delete(p.Address)
 			continue
 		}
@@ -170,7 +170,7 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request, sessionID 
 
 		conn, err := s.dialViaProxy(p, r.Host)
 		if err != nil {
-			log.Printf("[tunnel] dial %s via %s failed, removing", r.Host, p.Address)
+			log.Printf("[tunnel] dial %s via %s failed: %v, removing", r.Host, p.Address, err)
 			s.storage.Delete(p.Address)
 			continue
 		}
@@ -222,17 +222,9 @@ func (s *Server) dialViaProxy(p *storage.Proxy, host string) (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		// 发送 CONNECT 请求给上游 HTTP 代理
-		fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", host, host)
-		buf := make([]byte, 256)
-		n, err := conn.Read(buf)
-		if err != nil {
+		if err := establishHTTPConnectTunnel(conn, host, timeout); err != nil {
 			conn.Close()
 			return nil, err
-		}
-		if n < 12 {
-			conn.Close()
-			return nil, fmt.Errorf("short response from proxy")
 		}
 		return conn, nil
 	case "socks5":

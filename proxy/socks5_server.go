@@ -389,18 +389,9 @@ func (s *SOCKS5Server) dialViaProxy(p *storage.Proxy, target string) (net.Conn, 
 		if err != nil {
 			return nil, "", false, err
 		}
-		// 发送 CONNECT 请求
-		fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
-		buf := make([]byte, 256)
-		n, err := conn.Read(buf)
-		if err != nil {
+		if err := establishHTTPConnectTunnel(conn, target, timeout); err != nil {
 			conn.Close()
 			return nil, "", false, err
-		}
-		// 检查 HTTP 响应
-		if n < 12 || string(buf[:12]) != "HTTP/1.1 200" {
-			conn.Close()
-			return nil, "", false, fmt.Errorf("upstream proxy connect failed")
 		}
 		return conn, target, false, nil
 
