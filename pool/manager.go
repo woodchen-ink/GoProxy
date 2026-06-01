@@ -22,12 +22,12 @@ func NewManager(s *storage.Storage, cfg *config.Config) *Manager {
 
 // PoolStatus 池子状态
 type PoolStatus struct {
-	Total        int
-	HTTP         int
-	SOCKS5       int
-	HTTPSlots    int
-	SOCKS5Slots  int
-	State        string // healthy/warning/critical/emergency
+	Total            int
+	HTTP             int
+	SOCKS5           int
+	HTTPSlots        int
+	SOCKS5Slots      int
+	State            string // healthy/warning/critical/emergency
 	AvgLatencyHTTP   int
 	AvgLatencySocks5 int
 }
@@ -79,9 +79,8 @@ func (m *Manager) determineState(total, httpCount, socks5Count int) string {
 		return "critical"
 	}
 
-	// 警告：总数<95%
-	healthyThreshold := int(float64(m.cfg.PoolMaxSize) * 0.95)
-	if total < healthyThreshold {
+	// 警告：池子未满。后台监控会自动补齐被清理或请求失败移除的代理。
+	if total < m.cfg.PoolMaxSize {
 		return "warning"
 	}
 
@@ -106,7 +105,15 @@ func (m *Manager) NeedsFetch(status *PoolStatus) (bool, string, string) {
 
 	// 危急或警告：补充模式
 	if status.State == "critical" || status.State == "warning" {
-		// 判断哪个协议更缺
+		// 优先补充未达到目标槽位的协议。
+		if status.HTTP < status.HTTPSlots {
+			return true, "refill", "http"
+		}
+		if status.SOCKS5 < status.SOCKS5Slots {
+			return true, "refill", "socks5"
+		}
+
+		// 若槽位因浮动策略产生偏差，补充缺口比例更大的协议。
 		httpPct := float64(status.HTTP) / float64(status.HTTPSlots)
 		socks5Pct := float64(status.SOCKS5) / float64(status.SOCKS5Slots)
 
